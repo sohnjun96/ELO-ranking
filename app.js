@@ -38,10 +38,16 @@ async function api(path, method = "GET", body) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.ok === false) {
-    throw new Error(data.error || `HTTP ${res.status}`);
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error("API 응답 형식 오류: Pages Functions 라우팅을 확인하세요.");
   }
+
+  const data = await res.json().catch(() => null);
+  if (!data || data.ok !== true) {
+    throw new Error(data?.error || `HTTP ${res.status}`);
+  }
+
   return data;
 }
 

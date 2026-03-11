@@ -15,7 +15,8 @@
 ## 프로젝트 구조
 
 - `index.html`, `styles.css`, `app.js`: 프론트엔드 SPA
-- `functions/_worker.js`: API 라우터
+- `_worker.js`: Pages Functions advanced mode 엔트리
+- `functions/_worker.js`: API 라우터 본체
 - `functions/_lib/*`: ELO 계산/공통 유틸
 - `schema.sql`: D1 스키마
 

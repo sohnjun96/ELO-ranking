@@ -1,4 +1,5 @@
 ﻿:root {
+  color-scheme: light;
   --bg: #eef3f7;
   --ink: #13232f;
   --ink-soft: #4a5f6d;
@@ -19,6 +20,10 @@ body {
   background: radial-gradient(circle at 15% 10%, #f5fbff 0%, #eef3f7 42%, #dde7ef 100%);
   min-height: 100vh;
   padding: 20px;
+}
+
+h1, h2, h3, p, th, td, li, span, strong, div, article, section {
+  color: inherit;
 }
 
 .bg-orb {
@@ -114,6 +119,7 @@ h1, h2, h3 { margin: 0 0 12px; font-family: "Space Grotesk", "Noto Sans KR", san
   border-radius: 18px;
   padding: 16px;
   backdrop-filter: blur(4px);
+  color: var(--ink);
 }
 
 .muted { color: var(--ink-soft); font-size: 14px; }
@@ -135,6 +141,22 @@ input, select {
   border-radius: 12px;
   padding: 10px 11px;
   background: #fff;
+  color: var(--ink);
+}
+
+input::placeholder {
+  color: #6d7d89;
+}
+
+option {
+  color: var(--ink);
+}
+
+select:focus,
+input:focus,
+button:focus {
+  outline: 2px solid rgba(14, 159, 142, 0.3);
+  outline-offset: 1px;
 }
 
 button {
