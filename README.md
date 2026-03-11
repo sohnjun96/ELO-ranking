@@ -1,13 +1,44 @@
-﻿# ELO-ranking
+# ELO Cloudflare Redesign
 
-이 저장소는 Cloudflare Pages + D1 전환을 위한 재설계 산출물만 포함합니다.
+This repository contains a production-oriented redesign for moving the current Streamlit + Excel + pickle + Slack upload flow to:
 
-실제 산출물은 아래 경로에 있습니다.
+- Cloudflare Pages (frontend + Pages Functions API)
+- Cloudflare D1 (single source of truth)
 
-- `cloudflare-redesign/schema.sql`
-- `cloudflare-redesign/tools/export_sql_from_legacy.py`
-- `cloudflare-redesign/src/domain/elo.ts`
-- `cloudflare-redesign/docs/architecture.md`
-- `cloudflare-redesign/wrangler.toml.example`
+The redesign keeps the same business behavior:
 
-기존 Streamlit/Excel/Slack 기반 코드는 저장소에서 제거했으며, 로컬 참고용으로만 사용합니다.
+- same ELO formula
+- same tournament types (`REGULAR`/`ADHOC`/`FRIENDLY`)
+- same `K` and base points
+- same "calculate all tournament deltas from tournament start ratings, then apply at finalize" rule
+- same singles/doubles support
+
+## Folder layout
+
+- `schema.sql`: D1 relational schema, constraints, indexes, views.
+- `docs/architecture.md`: feature parity mapping, API design, migration/deployment flow.
+- `src/domain/elo.ts`: typed ELO domain logic ported for Cloudflare runtime.
+- `tools/export_sql_from_legacy.py`: exports SQL insert statements from legacy `data.xlsx` + `data/pickles`.
+- `wrangler.toml.example`: Pages + D1 binding example.
+
+## Quick start
+
+1. Create D1 database.
+2. Apply schema.
+3. Export legacy seed SQL.
+4. Import seed SQL.
+5. Deploy Pages project.
+
+Example commands:
+
+```bash
+wrangler d1 create elo-prod
+wrangler d1 execute elo-prod --file=schema.sql --remote
+python tools/export_sql_from_legacy.py \
+  --excel data/data.xlsx \
+  --pickles data/pickles \
+  --output seed_legacy.sql
+wrangler d1 execute elo-prod --file=seed_legacy.sql --remote
+```
+
+Then bind the DB in `wrangler.toml` using `wrangler.toml.example` as template.

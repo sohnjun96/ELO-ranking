@@ -90,16 +90,16 @@ If any step fails, rollback.
 2. Run:
 
 ```bash
-python cloudflare-redesign/tools/export_sql_from_legacy.py \
+python tools/export_sql_from_legacy.py \
   --excel data/data.xlsx \
   --pickles data/pickles \
-  --output cloudflare-redesign/seed_legacy.sql
+  --output seed_legacy.sql
 ```
 
 3. Import to D1:
 
 ```bash
-wrangler d1 execute elo-prod --file=cloudflare-redesign/seed_legacy.sql --remote
+wrangler d1 execute elo-prod --file=seed_legacy.sql --remote
 ```
 
 4. Verify:
