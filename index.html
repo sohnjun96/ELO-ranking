@@ -12,24 +12,24 @@
 <body>
   <div class="bg-orb orb-a"></div>
   <div class="bg-orb orb-b"></div>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>ELO Operations Hub</h1>
+        <p class="subtitle">Cloudflare Pages + D1</p>
+      </div>
+      <div class="status-box" id="healthStatus">API 확인 중...</div>
+    </header>
 
-  <header class="topbar">
-    <div>
-      <h1>ELO Operations Hub</h1>
-      <p class="subtitle">Cloudflare Pages + D1</p>
-    </div>
-    <div class="status-box" id="healthStatus">API 확인 중...</div>
-  </header>
+    <nav class="tabs" id="tabs">
+      <button data-tab="dashboard" class="tab active">대시보드</button>
+      <button data-tab="tournament" class="tab">대회 진행</button>
+      <button data-tab="records" class="tab">대회 기록</button>
+      <button data-tab="player" class="tab">선수별 기록</button>
+      <button data-tab="stats" class="tab">통계</button>
+    </nav>
 
-  <nav class="tabs" id="tabs">
-    <button data-tab="dashboard" class="tab active">대시보드</button>
-    <button data-tab="tournament" class="tab">대회 진행</button>
-    <button data-tab="records" class="tab">대회 기록</button>
-    <button data-tab="player" class="tab">선수별 기록</button>
-    <button data-tab="stats" class="tab">통계</button>
-  </nav>
-
-  <main>
+    <main>
     <section id="dashboard" class="panel active">
       <div class="grid two">
         <article class="card">
@@ -87,9 +87,16 @@
                 <option value="FRIENDLY">FRIENDLY</option>
               </select>
             </label>
-            <label>참가자 (복수 선택)
-              <select id="tournamentParticipants" multiple size="8"></select>
-            </label>
+            <div class="participant-picker">
+              <div class="participant-picker-head">
+                <span>참가자 선택</span>
+                <strong id="participantSelectionCount">0명 선택</strong>
+              </div>
+              <input id="participantSearchInput" placeholder="선수 이름 검색 (Enter: 첫 결과 빠른 추가)" />
+              <p class="muted">선수 버튼을 누르면 선택, 다시 누르면 선택 해제됩니다.</p>
+              <div id="participantSelectedList" class="selected-chips"></div>
+              <div id="participantPickList" class="pick-list"></div>
+            </div>
             <button type="submit">대회 시작</button>
           </form>
         </article>
@@ -164,7 +171,8 @@
         <div id="statsContent"></div>
       </article>
     </section>
-  </main>
+    </main>
+  </div>
 
   <div id="toast" class="toast"></div>
   <script type="module" src="/app.js"></script>

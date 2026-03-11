@@ -9,6 +9,10 @@
   playerStats: null,
   overview: null,
   simResult: null,
+  participantPicker: {
+    selectedIds: [],
+    query: "",
+  },
 };
 
 const RULES = {
@@ -141,8 +145,109 @@ async function checkHealth() {
     q("#healthStatus").style.background = "#d64545";
   }
 }
-function selectedValues(selectEl) {
-  return [...selectEl.selectedOptions].map((o) => Number(o.value));
+function normalizeSearch(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function syncParticipantSelectionWithPlayers() {
+  const validIds = new Set(state.players.map((player) => Number(player.id)));
+  state.participantPicker.selectedIds = state.participantPicker.selectedIds
+    .map((id) => Number(id))
+    .filter((id) => validIds.has(id));
+}
+
+function sortedPlayersByElo() {
+  return [...state.players].sort((a, b) => Number(b.currentElo) - Number(a.currentElo) || a.name.localeCompare(b.name));
+}
+
+function renderTournamentParticipantPicker() {
+  const searchEl = q("#participantSearchInput");
+  const selectedEl = q("#participantSelectedList");
+  const pickListEl = q("#participantPickList");
+  const countEl = q("#participantSelectionCount");
+  if (!searchEl || !selectedEl || !pickListEl || !countEl) return;
+
+  syncParticipantSelectionWithPlayers();
+
+  searchEl.value = state.participantPicker.query;
+  const query = normalizeSearch(state.participantPicker.query);
+  const players = sortedPlayersByElo();
+  const selectedSet = new Set(state.participantPicker.selectedIds);
+  const filteredPlayers = query
+    ? players.filter((player) => normalizeSearch(player.name).includes(query))
+    : players;
+  const selectedPlayers = players.filter((player) => selectedSet.has(Number(player.id)));
+
+  countEl.textContent = `${selectedSet.size}명 선택`;
+
+  selectedEl.innerHTML = selectedPlayers.length
+    ? selectedPlayers.map((player) => `
+      <button type="button" class="selected-chip" data-remove-participant-id="${player.id}" title="선택 해제">
+        <span>${player.name}</span>
+        <small>${formatNum(player.currentElo)}</small>
+      </button>
+    `).join("")
+    : '<p class="muted">아직 선택된 참가자가 없습니다.</p>';
+
+  pickListEl.innerHTML = filteredPlayers.length
+    ? filteredPlayers.map((player) => `
+      <button type="button" class="pick-item ${selectedSet.has(Number(player.id)) ? "active" : ""}" data-participant-id="${player.id}">
+        <span class="pick-name">${player.name}</span>
+        <span class="pick-elo">${formatNum(player.currentElo)} ELO</span>
+      </button>
+    `).join("")
+    : '<p class="muted">검색 결과가 없습니다.</p>';
+}
+
+function toggleParticipantSelection(playerId) {
+  const id = Number(playerId);
+  if (!Number.isInteger(id) || id <= 0) return;
+
+  syncParticipantSelectionWithPlayers();
+  const selectedSet = new Set(state.participantPicker.selectedIds);
+  if (selectedSet.has(id)) selectedSet.delete(id);
+  else selectedSet.add(id);
+  state.participantPicker.selectedIds = [...selectedSet];
+
+  renderTournamentParticipantPicker();
+}
+
+function bindTournamentParticipantPicker() {
+  const searchEl = q("#participantSearchInput");
+  const selectedEl = q("#participantSelectedList");
+  const pickListEl = q("#participantPickList");
+  if (!searchEl || !selectedEl || !pickListEl) return;
+
+  searchEl.addEventListener("input", (e) => {
+    state.participantPicker.query = String(e.target.value || "");
+    renderTournamentParticipantPicker();
+  });
+
+  searchEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+
+    const query = normalizeSearch(state.participantPicker.query);
+    if (!query) return;
+
+    const selectedSet = new Set(state.participantPicker.selectedIds);
+    const firstMatch = sortedPlayersByElo().find((player) => normalizeSearch(player.name).includes(query) && !selectedSet.has(Number(player.id)));
+    if (firstMatch) {
+      toggleParticipantSelection(firstMatch.id);
+    }
+  });
+
+  pickListEl.addEventListener("click", (e) => {
+    const button = e.target.closest("[data-participant-id]");
+    if (!button) return;
+    toggleParticipantSelection(button.dataset.participantId);
+  });
+
+  selectedEl.addEventListener("click", (e) => {
+    const button = e.target.closest("[data-remove-participant-id]");
+    if (!button) return;
+    toggleParticipantSelection(button.dataset.removeParticipantId);
+  });
 }
 
 function toggleDoubleInputs() {
@@ -175,9 +280,16 @@ function bindTournamentCreateForm() {
       const name = q("#tournamentName").value.trim();
       const tournamentDate = q("#tournamentDate").value;
       const tournamentType = q("#tournamentType").value;
-      const participantIds = selectedValues(q("#tournamentParticipants"));
+      syncParticipantSelectionWithPlayers();
+      const participantIds = [...state.participantPicker.selectedIds];
+      if (participantIds.length < 2) {
+        showToast("참가자는 2명 이상 선택해야 합니다.", true);
+        return;
+      }
 
       await api("/api/tournaments", "POST", { name, tournamentDate, tournamentType, participantIds });
+      state.participantPicker.selectedIds = [];
+      state.participantPicker.query = "";
       showToast("대회 시작 완료");
       await refreshAll();
       setTab("tournament");
@@ -350,7 +462,7 @@ function renderRecentMatches() {
   }
 
   root.innerHTML = state.recentMatches.map((m) => `
-    <div class="card" style="padding:10px; margin-bottom:8px;">
+    <div class="mini-match">
       <div class="muted">${m.tournamentDate} · ${m.tournamentName}</div>
       <div><strong>${m.teamAName}</strong> ${m.scoreA} : ${m.scoreB} <strong>${m.teamBName}</strong></div>
       <div class="muted">Δ ${m.deltaTeamA >= 0 ? "+" : ""}${m.deltaTeamA} / ${m.deltaTeamB >= 0 ? "+" : ""}${m.deltaTeamB}</div>
@@ -366,9 +478,7 @@ function renderTournament() {
   const open = state.openTournament;
   const createCard = q("#createTournamentCard");
   const openView = q("#openTournamentView");
-
-  const playersForSelect = state.players.map((p) => ({ id: p.id, name: `${p.name} (${formatNum(p.currentElo)})` }));
-  q("#tournamentParticipants").innerHTML = playersForSelect.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+  renderTournamentParticipantPicker();
 
   if (!open) {
     createCard.style.display = "block";
@@ -583,6 +693,7 @@ async function init() {
   bindTabEvents();
   bindPlayerForm();
   bindSimForm();
+  bindTournamentParticipantPicker();
   bindTournamentCreateForm();
   bindMatchForm();
   bindTournamentActionButtons();
