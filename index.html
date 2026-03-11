@@ -1,0 +1,172 @@
+﻿<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ELO Cloudflare System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+
+  <header class="topbar">
+    <div>
+      <h1>ELO Operations Hub</h1>
+      <p class="subtitle">Cloudflare Pages + D1</p>
+    </div>
+    <div class="status-box" id="healthStatus">API 확인 중...</div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="dashboard" class="tab active">대시보드</button>
+    <button data-tab="tournament" class="tab">대회 진행</button>
+    <button data-tab="records" class="tab">대회 기록</button>
+    <button data-tab="player" class="tab">선수별 기록</button>
+    <button data-tab="stats" class="tab">통계</button>
+  </nav>
+
+  <main>
+    <section id="dashboard" class="panel active">
+      <div class="grid two">
+        <article class="card">
+          <h2>선수 등록</h2>
+          <form id="playerForm" class="inline-form">
+            <input id="playerNameInput" placeholder="선수 이름" required />
+            <button type="submit">등록</button>
+          </form>
+          <p class="muted">초기 ELO는 입력하지 않으면 현재 평균값으로 설정됩니다.</p>
+        </article>
+
+        <article class="card">
+          <h2>ELO 시뮬레이터</h2>
+          <form id="simForm" class="sim-grid">
+            <label>대회 타입
+              <select id="simType">
+                <option value="REGULAR">REGULAR</option>
+                <option value="ADHOC">ADHOC</option>
+                <option value="FRIENDLY">FRIENDLY</option>
+              </select>
+            </label>
+            <label>Player A ELO<input id="simAelo" type="number" value="2000" min="1" /></label>
+            <label>Player B ELO<input id="simBelo" type="number" value="2000" min="1" /></label>
+            <label>Score A<input id="simAscore" type="number" value="6" min="0" /></label>
+            <label>Score B<input id="simBscore" type="number" value="4" min="0" /></label>
+            <button type="submit">계산</button>
+          </form>
+          <div id="simResult" class="muted"></div>
+        </article>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <h2>현재 랭킹</h2>
+          <div id="rankingTable"></div>
+        </article>
+        <article class="card">
+          <h2>최근 경기</h2>
+          <div id="recentMatches"></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="tournament" class="panel">
+      <div class="grid two">
+        <article class="card" id="createTournamentCard">
+          <h2>새 대회 시작</h2>
+          <form id="tournamentCreateForm" class="stack-form">
+            <label>대회명<input id="tournamentName" required /></label>
+            <label>대회일자<input id="tournamentDate" type="date" required /></label>
+            <label>대회종류
+              <select id="tournamentType">
+                <option value="REGULAR">REGULAR</option>
+                <option value="ADHOC">ADHOC</option>
+                <option value="FRIENDLY">FRIENDLY</option>
+              </select>
+            </label>
+            <label>참가자 (복수 선택)
+              <select id="tournamentParticipants" multiple size="8"></select>
+            </label>
+            <button type="submit">대회 시작</button>
+          </form>
+        </article>
+
+        <article class="card" id="openTournamentCard">
+          <h2>진행 중 대회</h2>
+          <div id="openTournamentView" class="muted">진행 중 대회 없음</div>
+        </article>
+      </div>
+
+      <article class="card" id="matchCard">
+        <h2>경기 기록</h2>
+        <form id="matchForm" class="match-grid">
+          <label>형식
+            <select id="matchFormat">
+              <option value="SINGLES">SINGLES</option>
+              <option value="DOUBLES">DOUBLES</option>
+            </select>
+          </label>
+          <label>팀 A 선수1<select id="matchA1"></select></label>
+          <label class="team2">팀 A 선수2<select id="matchA2"></select></label>
+          <label>팀 B 선수1<select id="matchB1"></select></label>
+          <label class="team2">팀 B 선수2<select id="matchB2"></select></label>
+          <label>점수 A<input id="matchScoreA" type="number" min="0" value="6" /></label>
+          <label>점수 B<input id="matchScoreB" type="number" min="0" value="4" /></label>
+          <button type="submit">경기 추가</button>
+        </form>
+      </article>
+
+      <div class="grid two">
+        <article class="card">
+          <h2>참가자/예상 ELO</h2>
+          <div id="openParticipants"></div>
+        </article>
+        <article class="card">
+          <h2>경기 목록</h2>
+          <div id="openMatches"></div>
+          <div class="actions-row">
+            <button class="danger" id="cancelTournamentBtn">대회 취소</button>
+            <button class="primary" id="finalizeTournamentBtn">대회 종료</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="records" class="panel">
+      <article class="card">
+        <h2>대회 기록</h2>
+        <div class="inline-form">
+          <select id="recordTournamentSelect"></select>
+          <button id="loadRecordBtn">불러오기</button>
+        </div>
+      </article>
+      <div id="recordContent"></div>
+    </section>
+
+    <section id="player" class="panel">
+      <article class="card">
+        <h2>선수별 기록</h2>
+        <div class="inline-form">
+          <select id="playerSelect"></select>
+          <button id="loadPlayerBtn">조회</button>
+        </div>
+      </article>
+      <div id="playerContent"></div>
+    </section>
+
+    <section id="stats" class="panel">
+      <article class="card">
+        <h2>전체 통계</h2>
+        <button id="refreshStatsBtn">새로고침</button>
+        <div id="statsContent"></div>
+      </article>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

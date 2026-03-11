@@ -1,44 +1,47 @@
-# ELO Cloudflare Redesign
+﻿# ELO Operations Hub (Cloudflare Pages + D1)
 
-This repository contains a production-oriented redesign for moving the current Streamlit + Excel + pickle + Slack upload flow to:
+테니스 ELO 운영용 웹앱입니다.
 
-- Cloudflare Pages (frontend + Pages Functions API)
-- Cloudflare D1 (single source of truth)
+## 구현된 기능
 
-The redesign keeps the same business behavior:
+- 선수 등록 (초기 ELO 자동/수동)
+- 진행 중 대회 1개 관리
+- 단식/복식 경기 기록 및 삭제
+- 대회 종료 시 ELO 일괄 반영
+- 대회 기록 조회
+- 선수별 전적/ELO 이력/상대 전적
+- 전체 통계 및 ELO 분포
 
-- same ELO formula
-- same tournament types (`REGULAR`/`ADHOC`/`FRIENDLY`)
-- same `K` and base points
-- same "calculate all tournament deltas from tournament start ratings, then apply at finalize" rule
-- same singles/doubles support
+## 프로젝트 구조
 
-## Folder layout
+- `index.html`, `styles.css`, `app.js`: 프론트엔드 SPA
+- `functions/_worker.js`: API 라우터
+- `functions/_lib/*`: ELO 계산/공통 유틸
+- `schema.sql`: D1 스키마
 
-- `schema.sql`: D1 relational schema, constraints, indexes, views.
-- `docs/architecture.md`: feature parity mapping, API design, migration/deployment flow.
-- `src/domain/elo.ts`: typed ELO domain logic ported for Cloudflare runtime.
-- `tools/export_sql_from_legacy.py`: exports SQL insert statements from legacy `data.xlsx` + `data/pickles`.
-- `wrangler.toml.example`: Pages + D1 binding example.
+## 배포 전 필수
 
-## Quick start
-
-1. Create D1 database.
-2. Apply schema.
-3. Export legacy seed SQL.
-4. Import seed SQL.
-5. Deploy Pages project.
-
-Example commands:
-
+1. D1 생성
 ```bash
-wrangler d1 create elo-prod
-wrangler d1 execute elo-prod --file=schema.sql --remote
-python tools/export_sql_from_legacy.py \
-  --excel data/data.xlsx \
-  --pickles data/pickles \
-  --output seed_legacy.sql
-wrangler d1 execute elo-prod --file=seed_legacy.sql --remote
+npx wrangler d1 create elo-prod
 ```
 
-Then bind the DB in `wrangler.toml` using `wrangler.toml.example` as template.
+2. `wrangler.toml`의 `database_id` 채우기
+
+3. 스키마 적용
+```bash
+npx wrangler d1 execute elo-prod --remote --file=schema.sql
+```
+
+## 로컬 실행
+
+```bash
+npm install
+npm run dev
+```
+
+## 배포
+
+```bash
+npm run deploy
+```

@@ -1,0 +1,5 @@
+﻿.wrangler/
+node_modules/
+*.log
+seed_legacy.sql
+cloudflare-redesign/

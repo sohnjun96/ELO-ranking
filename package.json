@@ -1,0 +1,9 @@
+﻿{
+  "name": "elo-pages",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npx wrangler pages dev .",
+    "deploy": "npx wrangler pages deploy ."
+  }
+}
