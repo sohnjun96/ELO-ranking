@@ -255,6 +255,11 @@ function toggleDoubleInputs() {
   document.querySelectorAll(".team2").forEach((el) => {
     el.style.display = doubles ? "grid" : "none";
   });
+
+  const teamA2 = q("#matchA2");
+  const teamB2 = q("#matchB2");
+  if (teamA2) teamA2.disabled = !doubles;
+  if (teamB2) teamB2.disabled = !doubles;
 }
 
 function bindPlayerForm() {
@@ -310,12 +315,15 @@ function bindMatchForm() {
     }
 
     try {
+      const matchFormat = q("#matchFormat").value;
+      const isDoubles = matchFormat === "DOUBLES";
+
       const payload = {
-        matchFormat: q("#matchFormat").value,
+        matchFormat,
         teamAPlayer1Id: Number(q("#matchA1").value),
-        teamAPlayer2Id: q("#matchA2").value ? Number(q("#matchA2").value) : null,
+        teamAPlayer2Id: isDoubles ? Number(q("#matchA2").value) : null,
         teamBPlayer1Id: Number(q("#matchB1").value),
-        teamBPlayer2Id: q("#matchB2").value ? Number(q("#matchB2").value) : null,
+        teamBPlayer2Id: isDoubles ? Number(q("#matchB2").value) : null,
         scoreA: Number(q("#matchScoreA").value || 0),
         scoreB: Number(q("#matchScoreB").value || 0),
       };
