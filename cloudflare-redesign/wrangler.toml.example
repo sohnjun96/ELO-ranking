@@ -1,0 +1,12 @@
+name = "elo-pages"
+compatibility_date = "2026-03-11"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "elo-prod"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+APP_TIMEZONE = "Asia/Seoul"
