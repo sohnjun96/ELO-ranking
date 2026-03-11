@@ -23,6 +23,23 @@ CREATE TABLE IF NOT EXISTS tournaments (
   UNIQUE (name, tournament_date)
 );
 
+CREATE TABLE IF NOT EXISTS tournament_rules (
+  tournament_type TEXT PRIMARY KEY CHECK (tournament_type IN ('REGULAR', 'ADHOC', 'FRIENDLY')),
+  display_name TEXT NOT NULL,
+  k_factor INTEGER NOT NULL CHECK (k_factor >= 0),
+  base_points INTEGER NOT NULL CHECK (base_points >= 0),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO tournament_rules (tournament_type, display_name, k_factor, base_points)
+VALUES ('REGULAR', '정규 대회', 200, 4);
+
+INSERT OR IGNORE INTO tournament_rules (tournament_type, display_name, k_factor, base_points)
+VALUES ('ADHOC', '상시 대회', 100, 1);
+
+INSERT OR IGNORE INTO tournament_rules (tournament_type, display_name, k_factor, base_points)
+VALUES ('FRIENDLY', '친선전', 0, 0);
+
 CREATE TABLE IF NOT EXISTS tournament_participants (
   tournament_id INTEGER NOT NULL,
   player_id INTEGER NOT NULL,

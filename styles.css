@@ -392,6 +392,51 @@ button.primary {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.rule-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.rule-row {
+  display: grid;
+  grid-template-columns: 1fr 110px 110px auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid rgba(18, 34, 49, 0.12);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.rule-row .rule-name {
+  font-weight: 700;
+  color: #2a3f4f;
+}
+
+.admin-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-meta.active {
+  background: #d8f4ec;
+  color: #0e695b;
+}
+
+.admin-meta.inactive {
+  background: #f2dede;
+  color: #8d3434;
+}
+
+.cell-muted {
+  color: var(--ink-soft);
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -496,6 +541,14 @@ button.primary {
   }
 
   .match-grid button {
+    grid-column: span 2;
+  }
+
+  .rule-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rule-row button {
     grid-column: span 2;
   }
 }

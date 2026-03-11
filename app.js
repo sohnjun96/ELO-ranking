@@ -9,19 +9,54 @@
   playerStats: null,
   overview: null,
   simResult: null,
+  tournamentRules: [],
+  adminPlayers: [],
+  adminSelectedPlayerId: null,
   participantPicker: {
     selectedIds: [],
     query: "",
   },
 };
 
-const RULES = {
-  REGULAR: { kFactor: 200, basePoints: 4 },
-  ADHOC: { kFactor: 100, basePoints: 1 },
-  FRIENDLY: { kFactor: 0, basePoints: 0 },
-};
+const DEFAULT_RULES = [
+  { tournamentType: "REGULAR", displayName: "정규 대회", kFactor: 200, basePoints: 4 },
+  { tournamentType: "ADHOC", displayName: "상시 대회", kFactor: 100, basePoints: 1 },
+  { tournamentType: "FRIENDLY", displayName: "친선전", kFactor: 0, basePoints: 0 },
+];
 
 const q = (selector) => document.querySelector(selector);
+
+function getTournamentRules() {
+  return state.tournamentRules.length ? state.tournamentRules : DEFAULT_RULES;
+}
+
+function tournamentRuleByType(type) {
+  const map = new Map(getTournamentRules().map((rule) => [rule.tournamentType, rule]));
+  return map.get(type) || DEFAULT_RULES.find((rule) => rule.tournamentType === type) || DEFAULT_RULES[0];
+}
+
+function tournamentTypeLabel(type) {
+  return tournamentRuleByType(type)?.displayName || String(type || "");
+}
+
+function renderTournamentTypeSelectOptions() {
+  const rules = getTournamentRules();
+  const simSelect = q("#simType");
+  const tournamentSelect = q("#tournamentType");
+  if (!simSelect || !tournamentSelect) return;
+
+  const currentSim = simSelect.value || "REGULAR";
+  const currentTournament = tournamentSelect.value || "REGULAR";
+  const optionsHtml = rules.map((rule) => `<option value="${rule.tournamentType}">${rule.displayName}</option>`).join("");
+
+  simSelect.innerHTML = optionsHtml;
+  tournamentSelect.innerHTML = optionsHtml;
+
+  const hasSim = rules.some((rule) => rule.tournamentType === currentSim);
+  const hasTournament = rules.some((rule) => rule.tournamentType === currentTournament);
+  simSelect.value = hasSim ? currentSim : "REGULAR";
+  tournamentSelect.value = hasTournament ? currentTournament : "REGULAR";
+}
 
 function formatNum(value) {
   return Number(value || 0).toLocaleString("ko-KR");
@@ -73,12 +108,12 @@ function expectedScore(a, b) {
 }
 
 function simCalculate({ type, aElo, bElo, aScore, bScore }) {
-  const rule = RULES[type];
+  const rule = tournamentRuleByType(type);
   const resultA = aScore / (aScore + bScore);
   const eA = expectedScore(aElo, bElo);
   const eB = 1 - eA;
-  const deltaA = Math.round(rule.kFactor * (resultA - eA)) + rule.basePoints;
-  const deltaB = Math.round(rule.kFactor * ((1 - resultA) - eB)) + rule.basePoints;
+  const deltaA = Math.round(Number(rule.kFactor) * (resultA - eA)) + Number(rule.basePoints);
+  const deltaB = Math.round(Number(rule.kFactor) * ((1 - resultA) - eB)) + Number(rule.basePoints);
   return {
     aAfter: aElo + deltaA,
     bAfter: bElo + deltaB,
@@ -119,6 +154,8 @@ async function refreshBootstrap() {
   state.players = data.players || [];
   state.recentMatches = data.recentMatches || [];
   state.openTournament = data.openTournament || null;
+  state.tournamentRules = data.tournamentRules || [];
+  renderTournamentTypeSelectOptions();
 }
 
 async function refreshTournaments() {
@@ -130,8 +167,24 @@ async function refreshOverview() {
   state.overview = await api("/api/stats/overview");
 }
 
+async function refreshAdminPlayers() {
+  const data = await api("/api/admin/players");
+  state.adminPlayers = data.players || [];
+
+  if (!state.adminPlayers.length) {
+    state.adminSelectedPlayerId = null;
+    return;
+  }
+
+  const exists = state.adminPlayers.some((player) => Number(player.id) === Number(state.adminSelectedPlayerId));
+  if (!exists) {
+    const firstActive = state.adminPlayers.find((player) => player.isActive);
+    state.adminSelectedPlayerId = Number(firstActive?.id || state.adminPlayers[0].id);
+  }
+}
+
 async function refreshAll() {
-  await Promise.all([refreshBootstrap(), refreshTournaments(), refreshOverview()]);
+  await Promise.all([refreshBootstrap(), refreshTournaments(), refreshOverview(), refreshAdminPlayers()]);
   renderAll();
 }
 
@@ -439,6 +492,113 @@ function bindStatsActions() {
   });
 }
 
+function getSelectedAdminPlayer() {
+  return state.adminPlayers.find((player) => Number(player.id) === Number(state.adminSelectedPlayerId)) || null;
+}
+
+function bindAdminActions() {
+  const playerSelect = q("#adminPlayerSelect");
+  if (!playerSelect) return;
+
+  playerSelect.addEventListener("change", (e) => {
+    state.adminSelectedPlayerId = Number(e.target.value || 0) || null;
+    renderAdmin();
+  });
+
+  q("#adminRenameForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const player = getSelectedAdminPlayer();
+    if (!player) {
+      showToast("선수를 먼저 선택하세요.", true);
+      return;
+    }
+
+    const name = q("#adminRenameInput").value.trim();
+    if (!name) {
+      showToast("변경할 이름을 입력하세요.", true);
+      return;
+    }
+
+    try {
+      await api(`/api/admin/players/${player.id}`, "PATCH", { name });
+      q("#adminRenameInput").value = "";
+      showToast("선수 이름 변경 완료");
+      await refreshAll();
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  q("#adminEloForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const player = getSelectedAdminPlayer();
+    if (!player) {
+      showToast("선수를 먼저 선택하세요.", true);
+      return;
+    }
+
+    const eloRaw = q("#adminEloInput").value;
+    if (eloRaw === "") {
+      showToast("변경할 ELO를 입력하세요.", true);
+      return;
+    }
+
+    try {
+      await api(`/api/admin/players/${player.id}`, "PATCH", { currentElo: Number(eloRaw) });
+      q("#adminEloInput").value = "";
+      showToast("선수 점수 조정 완료");
+      await refreshAll();
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  q("#adminDeletePlayerBtn").addEventListener("click", async () => {
+    const player = getSelectedAdminPlayer();
+    if (!player) {
+      showToast("선수를 먼저 선택하세요.", true);
+      return;
+    }
+    if (!confirm(`'${player.name}' 선수를 삭제(비활성화)할까요?`)) return;
+
+    try {
+      await api(`/api/admin/players/${player.id}`, "DELETE");
+      showToast("선수 비활성화 완료");
+      await refreshAll();
+      renderAdmin();
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  q("#ruleEditorRows").addEventListener("click", async (e) => {
+    const button = e.target.closest("button[data-save-rule]");
+    if (!button) return;
+    const type = button.dataset.saveRule;
+    const kInput = q(`#ruleK-${type}`);
+    const baseInput = q(`#ruleBase-${type}`);
+    if (!kInput || !baseInput) return;
+
+    try {
+      await api(`/api/settings/tournament-rules/${type}`, "PATCH", {
+        kFactor: Number(kInput.value),
+        basePoints: Number(baseInput.value),
+      });
+      showToast(`${tournamentTypeLabel(type)} 규칙 저장 완료`);
+      await refreshAll();
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  q("#adminPlayersTable").addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-admin-select]");
+    if (!button) return;
+    state.adminSelectedPlayerId = Number(button.dataset.adminSelect || 0) || null;
+    renderAdmin();
+  });
+}
+
 function renderRanking() {
   const root = q("#rankingTable");
   if (!state.players.length) {
@@ -502,7 +662,7 @@ function renderTournament() {
   createCard.style.display = "none";
   openView.innerHTML = `
     <div><strong>${open.name}</strong></div>
-    <div class="muted">${open.tournamentDate} · ${open.tournamentType} · K=${open.kFactor} · base=${open.basePoints}</div>
+    <div class="muted">${open.tournamentDate} · ${tournamentTypeLabel(open.tournamentType)} · K=${open.kFactor} · base=${open.basePoints}</div>
     <div class="muted">참가자 ${open.participants.length}명 · 경기 ${open.matchCount}개</div>
   `;
 
@@ -574,7 +734,7 @@ function renderRecord() {
   root.innerHTML = `
     <article class="card">
       <h2>${t.name}</h2>
-      <p class="muted">${t.tournamentDate} · ${t.tournamentType} · 경기 ${t.matchCount}개</p>
+      <p class="muted">${t.tournamentDate} · ${tournamentTypeLabel(t.tournamentType)} · 경기 ${t.matchCount}개</p>
     </article>
     <div class="grid two">
       <article class="card">
@@ -683,6 +843,85 @@ function renderStats() {
   `;
 }
 
+function renderAdmin() {
+  const ruleRoot = q("#ruleEditorRows");
+  const playerSelect = q("#adminPlayerSelect");
+  const playerMeta = q("#adminPlayerMeta");
+  const playersTableRoot = q("#adminPlayersTable");
+  if (!ruleRoot || !playerSelect || !playerMeta || !playersTableRoot) return;
+
+  const rules = getTournamentRules();
+  ruleRoot.innerHTML = rules.map((rule) => `
+    <div class="rule-row">
+      <div class="rule-name">${rule.displayName}</div>
+      <input id="ruleK-${rule.tournamentType}" type="number" min="0" value="${Number(rule.kFactor)}" />
+      <input id="ruleBase-${rule.tournamentType}" type="number" min="0" value="${Number(rule.basePoints)}" />
+      <button type="button" data-save-rule="${rule.tournamentType}">저장</button>
+    </div>
+  `).join("");
+
+  playerSelect.innerHTML = state.adminPlayers.map((player) => {
+    const status = player.isActive ? "" : " [비활성]";
+    return `<option value="${player.id}">${player.name}${status} (${formatNum(player.currentElo)})</option>`;
+  }).join("");
+
+  if (state.adminSelectedPlayerId != null) {
+    playerSelect.value = String(state.adminSelectedPlayerId);
+  }
+
+  const selectedPlayer = getSelectedAdminPlayer();
+  const renameInput = q("#adminRenameInput");
+  const eloInput = q("#adminEloInput");
+  const deleteButton = q("#adminDeletePlayerBtn");
+  const renameButton = q("#adminRenameForm button");
+  const eloButton = q("#adminEloForm button");
+
+  if (!selectedPlayer) {
+    playerMeta.textContent = "선수를 선택하세요.";
+    if (renameInput) renameInput.disabled = true;
+    if (eloInput) eloInput.disabled = true;
+    if (renameButton) renameButton.disabled = true;
+    if (eloButton) eloButton.disabled = true;
+    if (deleteButton) deleteButton.disabled = true;
+  } else {
+    const statusClass = selectedPlayer.isActive ? "active" : "inactive";
+    const openTournamentHint = selectedPlayer.inOpenTournament ? " · 진행 중 대회 참가 중" : "";
+    playerMeta.innerHTML = `
+      <span class="admin-meta ${statusClass}">${selectedPlayer.isActive ? "활성" : "비활성"}</span>
+      현재 ELO ${formatNum(selectedPlayer.currentElo)}${openTournamentHint}
+    `;
+    if (renameInput) renameInput.disabled = false;
+    if (eloInput) eloInput.disabled = false;
+    if (renameButton) renameButton.disabled = false;
+    if (eloButton) eloButton.disabled = false;
+    if (deleteButton) deleteButton.disabled = !selectedPlayer.isActive;
+  }
+
+  if (!state.adminPlayers.length) {
+    playersTableRoot.innerHTML = '<p class="muted">등록된 선수가 없습니다.</p>';
+    return;
+  }
+
+  const rows = state.adminPlayers.map((player) => `
+    <tr>
+      <td>${player.id}</td>
+      <td>${player.name}</td>
+      <td>${formatNum(player.currentElo)}</td>
+      <td>${player.isActive ? "활성" : "비활성"}</td>
+      <td>${player.inOpenTournament ? "참가중" : "-"}</td>
+      <td class="cell-muted">${player.matchCount}</td>
+      <td><button type="button" data-admin-select="${player.id}">선택</button></td>
+    </tr>
+  `).join("");
+
+  playersTableRoot.innerHTML = `
+    <table class="table">
+      <thead><tr><th>ID</th><th>이름</th><th>ELO</th><th>상태</th><th>OPEN 대회</th><th>기록 경기수</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
 function renderDashboard() {
   renderRanking();
   renderRecentMatches();
@@ -690,11 +929,13 @@ function renderDashboard() {
 }
 
 function renderAll() {
+  renderTournamentTypeSelectOptions();
   renderDashboard();
   renderTournament();
   renderRecord();
   renderPlayerStats();
   renderStats();
+  renderAdmin();
 }
 
 async function init() {
@@ -708,6 +949,7 @@ async function init() {
   bindRecordActions();
   bindPlayerActions();
   bindStatsActions();
+  bindAdminActions();
 
   q("#tournamentDate").value = new Date().toISOString().slice(0, 10);
   toggleDoubleInputs();

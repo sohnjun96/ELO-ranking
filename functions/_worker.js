@@ -1,5 +1,5 @@
 ﻿import { calculateMatchDelta } from "./_lib/elo.js";
-import { getTournamentRule, normalizeTournamentType } from "./_lib/constants.js";
+import { TOURNAMENT_RULE_DEFAULTS, TOURNAMENT_TYPES, normalizeTournamentType } from "./_lib/constants.js";
 import { assert, badRequest, json, methodNotAllowed, notFound, readJson } from "./_lib/http.js";
 
 async function dbAll(db, sql, ...params) {
@@ -50,6 +50,74 @@ function normalizeStatus(raw) {
   return ["OPEN", "FINALIZED", "CANCELED"].includes(value) ? value : null;
 }
 
+async function ensureTournamentRules(db) {
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS tournament_rules (
+      tournament_type TEXT PRIMARY KEY CHECK (tournament_type IN ('REGULAR', 'ADHOC', 'FRIENDLY')),
+      display_name TEXT NOT NULL,
+      k_factor INTEGER NOT NULL CHECK (k_factor >= 0),
+      base_points INTEGER NOT NULL CHECK (base_points >= 0),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`
+  );
+
+  for (const type of TOURNAMENT_TYPES) {
+    const defaults = TOURNAMENT_RULE_DEFAULTS[type];
+    await dbRun(
+      db,
+      `INSERT OR IGNORE INTO tournament_rules (tournament_type, display_name, k_factor, base_points, updated_at)
+      VALUES (?, ?, ?, ?, datetime('now'))`,
+      type,
+      defaults.displayName,
+      Number(defaults.kFactor),
+      Number(defaults.basePoints)
+    );
+  }
+}
+
+async function listTournamentRules(db) {
+  await ensureTournamentRules(db);
+  const rows = await dbAll(
+    db,
+    `SELECT tournament_type AS tournamentType, display_name AS displayName, k_factor AS kFactor, base_points AS basePoints
+    FROM tournament_rules
+    ORDER BY CASE tournament_type
+      WHEN 'REGULAR' THEN 1
+      WHEN 'ADHOC' THEN 2
+      WHEN 'FRIENDLY' THEN 3
+      ELSE 9
+    END`
+  );
+
+  return rows.map((row) => ({
+    tournamentType: row.tournamentType,
+    displayName: row.displayName,
+    kFactor: Number(row.kFactor),
+    basePoints: Number(row.basePoints),
+  }));
+}
+
+async function getTournamentRuleForType(db, rawType) {
+  const tournamentType = normalizeTournamentType(rawType);
+  assert(tournamentType, "tournamentType must be REGULAR, ADHOC or FRIENDLY");
+  await ensureTournamentRules(db);
+  const row = await dbFirst(
+    db,
+    `SELECT display_name AS displayName, k_factor AS kFactor, base_points AS basePoints
+    FROM tournament_rules
+    WHERE tournament_type=?`,
+    tournamentType
+  );
+  assert(row, `Tournament rule not found: ${tournamentType}`);
+  return {
+    tournamentType,
+    displayName: row.displayName,
+    kFactor: Number(row.kFactor),
+    basePoints: Number(row.basePoints),
+  };
+}
+
 function teamName(p1, p2, format) {
   return format === "DOUBLES" && p2 ? `${p1} / ${p2}` : p1;
 }
@@ -94,6 +162,170 @@ async function listPlayers(db) {
     WHERE p.is_active=1
     ORDER BY p.current_elo DESC, p.name ASC`
   );
+}
+
+async function listAdminPlayers(db) {
+  const rows = await dbAll(
+    db,
+    `SELECT
+      p.id,
+      p.name,
+      p.current_elo AS currentElo,
+      p.is_active AS isActive,
+      p.created_at AS createdAt,
+      p.updated_at AS updatedAt,
+      EXISTS(
+        SELECT 1
+        FROM tournament_participants tp
+        JOIN tournaments t ON t.id = tp.tournament_id
+        WHERE tp.player_id = p.id AND t.status = 'OPEN'
+      ) AS inOpenTournament,
+      (
+        SELECT COUNT(*)
+        FROM matches m
+        WHERE m.status='ACTIVE'
+          AND (m.team_a_player1_id=p.id OR m.team_a_player2_id=p.id OR m.team_b_player1_id=p.id OR m.team_b_player2_id=p.id)
+      ) AS matchCount
+    FROM players p
+    ORDER BY p.is_active DESC, p.current_elo DESC, p.name ASC`
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    name: row.name,
+    currentElo: Number(row.currentElo),
+    isActive: Number(row.isActive) === 1,
+    inOpenTournament: Number(row.inOpenTournament) === 1,
+    matchCount: Number(row.matchCount || 0),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
+async function getAdminPlayer(db, playerId) {
+  const row = await dbFirst(
+    db,
+    `SELECT id, name, current_elo AS currentElo, is_active AS isActive, created_at AS createdAt, updated_at AS updatedAt
+    FROM players
+    WHERE id=?`,
+    playerId
+  );
+  if (!row) return null;
+
+  const openRow = await dbFirst(
+    db,
+    `SELECT t.id AS tournamentId, t.name
+    FROM tournament_participants tp
+    JOIN tournaments t ON t.id = tp.tournament_id
+    WHERE tp.player_id=? AND t.status='OPEN'
+    LIMIT 1`,
+    playerId
+  );
+
+  return {
+    id: Number(row.id),
+    name: row.name,
+    currentElo: Number(row.currentElo),
+    isActive: Number(row.isActive) === 1,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    openTournament: openRow ? { id: Number(openRow.tournamentId), name: openRow.name } : null,
+  };
+}
+
+async function adminUpdatePlayer(db, playerId, body) {
+  const current = await getAdminPlayer(db, playerId);
+  assert(current, "Player not found");
+
+  const statements = [];
+
+  if (body.name != null) {
+    const newName = String(body.name).trim();
+    assert(newName.length > 0, "Player name cannot be empty");
+    if (newName !== current.name) {
+      const exists = await dbFirst(db, `SELECT id FROM players WHERE name=? AND id<>?`, newName, playerId);
+      assert(!exists, "Player name already exists");
+      statements.push(db.prepare(`UPDATE players SET name=?, updated_at=datetime('now') WHERE id=?`).bind(newName, playerId));
+    }
+  }
+
+  if (body.currentElo != null) {
+    assert(!current.openTournament, "Cannot adjust ELO while player is in OPEN tournament");
+    const targetElo = parseNonNegativeInt(body.currentElo, "currentElo");
+    if (targetElo !== current.currentElo) {
+      const delta = targetElo - current.currentElo;
+      const note = String(body.note || "관리자 점수 조정").trim() || "관리자 점수 조정";
+      statements.push(db.prepare(`UPDATE players SET current_elo=?, updated_at=datetime('now') WHERE id=?`).bind(targetElo, playerId));
+      statements.push(
+        db.prepare(
+          `INSERT INTO rating_events (
+            player_id, event_type, event_date, k_factor, base_points, elo_before, delta, elo_after, note, created_at
+          ) VALUES (?, 'ADJUSTMENT', date('now'), 0, 0, ?, ?, ?, ?, datetime('now'))`
+        ).bind(playerId, current.currentElo, delta, targetElo, note)
+      );
+    }
+  }
+
+  assert(statements.length > 0, "No changes requested");
+  await db.batch(statements);
+  return await getAdminPlayer(db, playerId);
+}
+
+async function adminDeletePlayer(db, playerId) {
+  const current = await getAdminPlayer(db, playerId);
+  assert(current, "Player not found");
+  assert(current.isActive, "Player is already inactive");
+  assert(!current.openTournament, "Cannot delete player while in OPEN tournament");
+
+  await dbRun(db, `UPDATE players SET is_active=0, updated_at=datetime('now') WHERE id=?`, playerId);
+  return await getAdminPlayer(db, playerId);
+}
+
+async function updateTournamentRule(db, rawType, body) {
+  const tournamentType = normalizeTournamentType(rawType);
+  assert(tournamentType, "Invalid tournamentType");
+  await ensureTournamentRules(db);
+
+  const current = await dbFirst(
+    db,
+    `SELECT tournament_type AS tournamentType, display_name AS displayName, k_factor AS kFactor, base_points AS basePoints
+    FROM tournament_rules
+    WHERE tournament_type=?`,
+    tournamentType
+  );
+  assert(current, "Tournament rule not found");
+
+  const hasK = body.kFactor != null;
+  const hasBase = body.basePoints != null;
+  assert(hasK || hasBase, "kFactor or basePoints is required");
+
+  const kFactor = hasK ? parseNonNegativeInt(body.kFactor, "kFactor") : Number(current.kFactor);
+  const basePoints = hasBase ? parseNonNegativeInt(body.basePoints, "basePoints") : Number(current.basePoints);
+
+  await dbRun(
+    db,
+    `UPDATE tournament_rules
+    SET k_factor=?, base_points=?, updated_at=datetime('now')
+    WHERE tournament_type=?`,
+    kFactor,
+    basePoints,
+    tournamentType
+  );
+
+  const updated = await dbFirst(
+    db,
+    `SELECT tournament_type AS tournamentType, display_name AS displayName, k_factor AS kFactor, base_points AS basePoints
+    FROM tournament_rules
+    WHERE tournament_type=?`,
+    tournamentType
+  );
+
+  return {
+    tournamentType: updated.tournamentType,
+    displayName: updated.displayName,
+    kFactor: Number(updated.kFactor),
+    basePoints: Number(updated.basePoints),
+  };
 }
 
 async function listRecentMatches(db, limit = 20) {
@@ -297,9 +529,8 @@ async function createTournament(db, body) {
   assert(name.length > 0, "Tournament name is required");
 
   const tournamentDate = normalizeDate(body.tournamentDate || body.date || new Date());
-  const tournamentType = normalizeTournamentType(body.tournamentType);
-  assert(tournamentType, "tournamentType must be REGULAR, ADHOC or FRIENDLY");
-  const rule = getTournamentRule(tournamentType);
+  const rule = await getTournamentRuleForType(db, body.tournamentType);
+  const tournamentType = rule.tournamentType;
 
   const participantIds = parseParticipantIds(body.participantIds);
   const players = await fetchPlayersByIds(db, participantIds);
@@ -363,9 +594,8 @@ async function updateTournament(db, tournamentId, body) {
 
   if (body.tournamentType != null) {
     assert(matchCount === 0, "Cannot change tournament type after matches are recorded");
-    const tournamentType = normalizeTournamentType(body.tournamentType);
-    assert(tournamentType, "Invalid tournamentType");
-    const rule = getTournamentRule(tournamentType);
+    const rule = await getTournamentRuleForType(db, body.tournamentType);
+    const tournamentType = rule.tournamentType;
     updateSql.push("tournament_type=?", "k_factor=?", "base_points=?");
     values.push(tournamentType, rule.kFactor, rule.basePoints);
   }
@@ -799,9 +1029,10 @@ async function route(request, env) {
     if (request.method !== "GET") return methodNotAllowed();
     const players = await listPlayers(env.DB);
     const recentMatches = await listRecentMatches(env.DB, 8);
+    const tournamentRules = await listTournamentRules(env.DB);
     const open = await getOpenTournamentRow(env.DB);
     const openTournament = open ? await tournamentDetail(env.DB, Number(open.id)) : null;
-    return json({ ok: true, players, recentMatches, openTournament });
+    return json({ ok: true, players, recentMatches, openTournament, tournamentRules });
   }
 
   if (segments[0] === "recent-matches") {
@@ -810,6 +1041,43 @@ async function route(request, env) {
     const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(100, limitRaw)) : 20;
     const matches = await listRecentMatches(env.DB, limit);
     return json({ ok: true, matches });
+  }
+
+  if (segments[0] === "settings") {
+    if (segments.length === 2 && segments[1] === "tournament-rules") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return json({ ok: true, tournamentRules: await listTournamentRules(env.DB) });
+    }
+
+    if (segments.length === 3 && segments[1] === "tournament-rules") {
+      if (request.method !== "PATCH") return methodNotAllowed();
+      const body = await readJson(request);
+      const rule = await updateTournamentRule(env.DB, segments[2], body);
+      return json({ ok: true, rule, tournamentRules: await listTournamentRules(env.DB) });
+    }
+
+    return notFound();
+  }
+
+  if (segments[0] === "admin") {
+    if (segments.length === 2 && segments[1] === "players") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return json({ ok: true, players: await listAdminPlayers(env.DB) });
+    }
+
+    if (segments.length === 3 && segments[1] === "players") {
+      const playerId = parseId(segments[2], "playerId");
+      if (request.method === "PATCH") {
+        const body = await readJson(request);
+        return json({ ok: true, player: await adminUpdatePlayer(env.DB, playerId, body) });
+      }
+      if (request.method === "DELETE") {
+        return json({ ok: true, player: await adminDeletePlayer(env.DB, playerId) });
+      }
+      return methodNotAllowed();
+    }
+
+    return notFound();
   }
 
   if (segments[0] === "players") {
