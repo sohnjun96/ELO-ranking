@@ -384,12 +384,138 @@ button.primary {
   color: var(--ink-soft);
 }
 
-.mini-match {
-  margin-bottom: 9px;
-  padding: 10px 11px;
+.match-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.match-result-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(18, 34, 49, 0.13);
+  border-radius: 16px;
+  padding: 12px;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.94), rgba(235, 247, 255, 0.74));
+  box-shadow: 0 16px 26px -22px rgba(13, 41, 63, 0.7);
+}
+
+.match-result-card::after {
+  content: "";
+  position: absolute;
+  top: -26px;
+  right: -18px;
+  width: 90px;
+  height: 90px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, rgba(16, 182, 160, 0.35), rgba(16, 182, 160, 0));
+  pointer-events: none;
+}
+
+.match-result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.match-head-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.match-order {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(13, 157, 140, 0.15);
+  color: #12675b;
+}
+
+.match-format {
+  font-size: 12px;
+  color: #466174;
+  font-weight: 700;
+}
+
+.match-delete-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.match-meta {
+  margin-top: 5px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.match-score-body {
+  margin-top: 9px;
+  display: grid;
+  gap: 8px;
+}
+
+.match-team-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
   border-radius: 12px;
-  border: 1px solid rgba(18, 34, 49, 0.1);
-  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(18, 34, 49, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.match-team-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #20384a;
+}
+
+.match-team-score {
+  min-width: 34px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #0f4f70;
+}
+
+.match-vs {
+  justify-self: center;
+  color: #618095;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.match-delta-row {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.delta-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.delta-pill.up {
+  background: rgba(22, 166, 119, 0.16);
+  color: #0f7252;
+}
+
+.delta-pill.down {
+  background: rgba(214, 87, 87, 0.16);
+  color: #8f3131;
 }
 
 .rule-editor {
@@ -437,6 +563,15 @@ button.primary {
   color: var(--ink-soft);
 }
 
+.player-score-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.player-score-cell strong {
+  font-variant-numeric: tabular-nums;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -454,6 +589,12 @@ button.primary {
   color: #304657;
   font-weight: 700;
   background: rgba(245, 250, 253, 0.7);
+}
+
+.num-col {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .badge {
@@ -580,5 +721,13 @@ button.primary {
 
   .tabs {
     top: 6px;
+  }
+
+  .match-team-name {
+    font-size: 13px;
+  }
+
+  .match-team-score {
+    font-size: 16px;
   }
 }

@@ -62,6 +62,52 @@ function formatNum(value) {
   return Number(value || 0).toLocaleString("ko-KR");
 }
 
+function formatSigned(value) {
+  const num = Number(value || 0);
+  return `${num >= 0 ? "+" : ""}${num}`;
+}
+
+function matchFormatLabel(format) {
+  return format === "DOUBLES" ? "복식" : "단식";
+}
+
+function renderMatchResultCard(match, options = {}) {
+  const withMeta = options.withMeta !== false;
+  const showDelete = Boolean(options.showDelete);
+  const deleteId = options.deleteId;
+  const metaText = withMeta
+    ? [match.tournamentDate, match.tournamentName, tournamentTypeLabel(match.tournamentType)].filter(Boolean).join(" · ")
+    : "";
+
+  return `
+    <article class="match-result-card">
+      <header class="match-result-head">
+        <div class="match-head-main">
+          ${match.matchOrder != null ? `<span class="match-order">#${match.matchOrder}</span>` : ""}
+          <span class="match-format">${matchFormatLabel(match.matchFormat)}</span>
+        </div>
+        ${showDelete ? `<button type="button" data-delete-id="${deleteId}" class="danger match-delete-btn">삭제</button>` : ""}
+      </header>
+      ${metaText ? `<div class="match-meta">${metaText}</div>` : ""}
+      <div class="match-score-body">
+        <div class="match-team-line">
+          <span class="match-team-name">${match.teamAName}</span>
+          <span class="match-team-score">${match.scoreA}</span>
+        </div>
+        <div class="match-vs">VS</div>
+        <div class="match-team-line">
+          <span class="match-team-name">${match.teamBName}</span>
+          <span class="match-team-score">${match.scoreB}</span>
+        </div>
+      </div>
+      <footer class="match-delta-row">
+        <span class="delta-pill ${Number(match.deltaTeamA) >= 0 ? "up" : "down"}">A ${formatSigned(match.deltaTeamA)}</span>
+        <span class="delta-pill ${Number(match.deltaTeamB) >= 0 ? "up" : "down"}">B ${formatSigned(match.deltaTeamB)}</span>
+      </footer>
+    </article>
+  `;
+}
+
 function showToast(message, isError = false) {
   const el = q("#toast");
   el.textContent = message;
@@ -608,9 +654,9 @@ function renderRanking() {
 
   const rows = state.players.map((p) => `
     <tr>
-      <td>${p.rank}</td>
+      <td class="num-col">${p.rank}</td>
       <td>${p.name}</td>
-      <td>${formatNum(p.currentElo)}</td>
+      <td class="num-col">${formatNum(p.currentElo)}</td>
     </tr>
   `).join("");
 
@@ -629,13 +675,11 @@ function renderRecentMatches() {
     return;
   }
 
-  root.innerHTML = state.recentMatches.map((m) => `
-    <div class="mini-match">
-      <div class="muted">${m.tournamentDate} · ${m.tournamentName}</div>
-      <div><strong>${m.teamAName}</strong> ${m.scoreA} : ${m.scoreB} <strong>${m.teamBName}</strong></div>
-      <div class="muted">Δ ${m.deltaTeamA >= 0 ? "+" : ""}${m.deltaTeamA} / ${m.deltaTeamB >= 0 ? "+" : ""}${m.deltaTeamB}</div>
+  root.innerHTML = `
+    <div class="match-card-list">
+      ${state.recentMatches.map((m) => renderMatchResultCard(m, { withMeta: true })).join("")}
     </div>
-  `).join("");
+  `;
 }
 function fillSelectOptions(selectEl, items, selectedValue = null) {
   selectEl.innerHTML = items.map((item) => `<option value="${item.id}">${item.name}</option>`).join("");
@@ -670,35 +714,29 @@ function renderTournament() {
     .sort((a, b) => b.projectedElo - a.projectedElo || a.name.localeCompare(b.name))
     .map((p, idx) => `
       <tr>
-        <td>${idx + 1}</td>
+        <td class="num-col">${idx + 1}</td>
         <td>${p.name}</td>
-        <td>${formatNum(p.seedElo)}</td>
-        <td>${p.pendingDelta >= 0 ? "+" : ""}${p.pendingDelta}</td>
-        <td>${formatNum(p.projectedElo)}</td>
+        <td>
+          <div class="player-score-cell">
+            <strong>${formatNum(p.projectedElo)}</strong>
+            <span class="cell-muted">시드 ${formatNum(p.seedElo)} · 점수 ${formatSigned(p.pendingDelta)}</span>
+          </div>
+        </td>
       </tr>
     `).join("");
 
   q("#openParticipants").innerHTML = `
     <table class="table">
-      <thead><tr><th>#</th><th>이름</th><th>시드</th><th>델타</th><th>예상 ELO</th></tr></thead>
+      <thead><tr><th>#</th><th>이름</th><th>ELO/점수</th></tr></thead>
       <tbody>${participantRows}</tbody>
     </table>
   `;
 
-  const matchRows = open.matches.map((m) => `
-    <tr>
-      <td>${m.matchOrder}</td>
-      <td>${m.matchFormat}</td>
-      <td>${m.teamAName}</td>
-      <td>${m.scoreA}:${m.scoreB}</td>
-      <td>${m.teamBName}</td>
-      <td>${m.deltaTeamA >= 0 ? "+" : ""}${m.deltaTeamA}/${m.deltaTeamB >= 0 ? "+" : ""}${m.deltaTeamB}</td>
-      <td><button data-delete-id="${m.id}" class="danger">삭제</button></td>
-    </tr>
-  `).join("");
-
   q("#openMatches").innerHTML = open.matches.length
-    ? `<table class="table"><thead><tr><th>#</th><th>형식</th><th>팀A</th><th>점수</th><th>팀B</th><th>델타</th><th></th></tr></thead><tbody>${matchRows}</tbody></table>`
+    ? `<div class="match-card-list">${open.matches.map((m) => renderMatchResultCard(
+      { ...m, tournamentDate: open.tournamentDate, tournamentName: open.name, tournamentType: open.tournamentType },
+      { withMeta: false, showDelete: true, deleteId: m.id }
+    )).join("")}</div>`
     : '<p class="muted">아직 기록된 경기가 없습니다.</p>';
 
   const participantOptions = open.participants.map((p) => ({ id: p.playerId, name: p.name }));
@@ -724,12 +762,15 @@ function renderRecord() {
 
   const t = state.recordTournament;
   const ratingRows = (t.ratingEvents || []).map((r) => `
-    <tr><td>${r.name}</td><td>${formatNum(r.eloBefore)}</td><td>${r.delta >= 0 ? "+" : ""}${r.delta}</td><td>${formatNum(r.eloAfter)}</td></tr>
+    <tr><td>${r.name}</td><td class="num-col">${formatNum(r.eloBefore)}</td><td class="num-col">${formatSigned(r.delta)}</td><td class="num-col">${formatNum(r.eloAfter)}</td></tr>
   `).join("");
 
-  const matchRows = (t.matches || []).map((m) => `
-    <tr><td>${m.matchOrder}</td><td>${m.matchFormat}</td><td>${m.teamAName}</td><td>${m.scoreA}:${m.scoreB}</td><td>${m.teamBName}</td></tr>
-  `).join("");
+  const matchCards = (t.matches || []).map((m) =>
+    renderMatchResultCard(
+      { ...m, tournamentDate: t.tournamentDate, tournamentName: t.name, tournamentType: t.tournamentType },
+      { withMeta: false }
+    )
+  ).join("");
 
   root.innerHTML = `
     <article class="card">
@@ -743,7 +784,7 @@ function renderRecord() {
       </article>
       <article class="card">
         <h3>경기 결과</h3>
-        <table class="table"><thead><tr><th>#</th><th>형식</th><th>팀A</th><th>점수</th><th>팀B</th></tr></thead><tbody>${matchRows}</tbody></table>
+        ${matchCards ? `<div class="match-card-list">${matchCards}</div>` : '<p class="muted">기록된 경기가 없습니다.</p>'}
       </article>
     </div>
   `;
@@ -768,7 +809,7 @@ function renderPlayerStats() {
   `).join("");
 
   const events = s.events.map((e) => `
-    <tr><td>${e.eventDate}</td><td>${e.eventType}</td><td>${formatNum(e.eloBefore)}</td><td>${e.delta >= 0 ? "+" : ""}${e.delta}</td><td>${formatNum(e.eloAfter)}</td></tr>
+    <tr><td>${e.eventDate}</td><td>${e.eventType}</td><td class="num-col">${formatNum(e.eloBefore)}</td><td class="num-col">${formatSigned(e.delta)}</td><td class="num-col">${formatNum(e.eloAfter)}</td></tr>
   `).join("");
 
   const opponents = s.opponents.map((o) => `<tr><td>${o.opponent}</td><td>${o.matches}</td><td>${o.wins}</td><td>${o.losses}</td><td>${o.draws}</td></tr>`).join("");
@@ -805,7 +846,7 @@ function renderStats() {
     return;
   }
 
-  const topRows = data.topPlayers.map((p) => `<tr><td>${p.rank}</td><td>${p.name}</td><td>${formatNum(p.currentElo)}</td></tr>`).join("");
+  const topRows = data.topPlayers.map((p) => `<tr><td class="num-col">${p.rank}</td><td>${p.name}</td><td class="num-col">${formatNum(p.currentElo)}</td></tr>`).join("");
   const tourRows = data.recentTournaments.map((t) => `<tr><td>${t.tournamentDate}</td><td>${t.name}</td><td>${t.status}</td><td>${t.matchCount}</td></tr>`).join("");
 
   const histEntries = Object.entries(data.eloHistogram || {});
@@ -904,12 +945,12 @@ function renderAdmin() {
 
   const rows = state.adminPlayers.map((player) => `
     <tr>
-      <td>${player.id}</td>
+      <td class="num-col">${player.id}</td>
       <td>${player.name}</td>
-      <td>${formatNum(player.currentElo)}</td>
+      <td class="num-col">${formatNum(player.currentElo)}</td>
       <td>${player.isActive ? "활성" : "비활성"}</td>
       <td>${player.inOpenTournament ? "참가중" : "-"}</td>
-      <td class="cell-muted">${player.matchCount}</td>
+      <td class="cell-muted num-col">${player.matchCount}</td>
       <td><button type="button" data-admin-select="${player.id}">선택</button></td>
     </tr>
   `).join("");
