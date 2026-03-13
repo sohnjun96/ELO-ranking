@@ -220,7 +220,18 @@ p {
 .topbar-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.sync-note {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3e5a74;
+  border: 1px solid #bfd1e4;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(245, 250, 255, 0.92);
 }
 
 .status-box {
@@ -438,6 +449,42 @@ button.primary {
 .stack-form {
   display: grid;
   gap: 10px;
+}
+
+.card-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.compact-label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4f6479;
+}
+
+.picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mini-btn {
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-size: 12px;
+}
+
+.admin-tools input {
+  flex: 1;
+}
+
+.admin-tools select {
+  max-width: 150px;
 }
 
 .sim-grid {
@@ -837,6 +884,15 @@ button.primary {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  min-width: 540px;
+}
+
+.table-wrap {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 12px;
+  background: #ffffff;
 }
 
 .table th,
@@ -1031,7 +1087,7 @@ button.primary {
 
   .topbar-actions {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
   .grid.two {
@@ -1067,6 +1123,15 @@ button.primary {
   .inline-form {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .card-tools {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-tools select {
+    max-width: none;
   }
 
   .sim-grid,

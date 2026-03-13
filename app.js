@@ -20,6 +20,11 @@
     count: 0,
     message: "데이터를 동기화하는 중...",
   },
+  rankingQuery: "",
+  recentMatchFormatFilter: "ALL",
+  adminPlayerQuery: "",
+  adminPlayerStatusFilter: "ALL",
+  lastSyncedAt: null,
 };
 
 const DEFAULT_RULES = [
@@ -80,6 +85,23 @@ function tournamentStatusLabel(status) {
   if (status === "FINALIZED") return "종료";
   if (status === "CANCELED") return "취소";
   return String(status || "-");
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("ko-KR", {
+    hour12: false,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function tableWrap(innerHtml) {
+  return `<div class="table-wrap">${innerHtml}</div>`;
 }
 
 function renderMatchResultCard(match, options = {}) {
@@ -203,6 +225,62 @@ function bindGlobalActions() {
   });
 }
 
+function bindDashboardFilters() {
+  const rankingInput = q("#rankingSearchInput");
+  if (rankingInput) {
+    rankingInput.addEventListener("input", (e) => {
+      state.rankingQuery = String(e.target.value || "");
+      renderRanking();
+    });
+  }
+
+  const recentFilter = q("#recentMatchFormatFilter");
+  if (recentFilter) {
+    recentFilter.addEventListener("change", (e) => {
+      state.recentMatchFormatFilter = String(e.target.value || "ALL");
+      renderRecentMatches();
+    });
+  }
+}
+
+function bindParticipantPickerActions() {
+  const selectAllButton = q("#participantSelectAllBtn");
+  const selectTop8Button = q("#participantSelectTop8Btn");
+  const clearButton = q("#participantClearBtn");
+  if (!selectAllButton || !selectTop8Button || !clearButton) return;
+
+  selectAllButton.addEventListener("click", () => {
+    state.participantPicker.selectedIds = sortedPlayersByElo().map((player) => Number(player.id));
+    renderTournamentParticipantPicker();
+  });
+
+  selectTop8Button.addEventListener("click", () => {
+    state.participantPicker.selectedIds = sortedPlayersByElo().slice(0, 8).map((player) => Number(player.id));
+    renderTournamentParticipantPicker();
+  });
+
+  clearButton.addEventListener("click", () => {
+    state.participantPicker.selectedIds = [];
+    renderTournamentParticipantPicker();
+  });
+}
+
+function bindAdminFilters() {
+  const queryInput = q("#adminPlayerSearchInput");
+  const statusFilter = q("#adminPlayerStatusFilter");
+  if (!queryInput || !statusFilter) return;
+
+  queryInput.addEventListener("input", (e) => {
+    state.adminPlayerQuery = String(e.target.value || "");
+    renderAdmin();
+  });
+
+  statusFilter.addEventListener("change", (e) => {
+    state.adminPlayerStatusFilter = String(e.target.value || "ALL");
+    renderAdmin();
+  });
+}
+
 function expectedScore(a, b) {
   return 1 / (1 + 10 ** ((b - a) / 400));
 }
@@ -287,6 +365,7 @@ async function refreshAll(options = {}) {
   const { loadingMessage = "데이터를 동기화하는 중..." } = options;
   return withLoading(async () => {
     await Promise.all([refreshBootstrap(), refreshTournaments(), refreshOverview(), refreshAdminPlayers()]);
+    state.lastSyncedAt = new Date();
     renderAll();
   }, loadingMessage);
 }
@@ -353,6 +432,13 @@ function renderTournamentParticipantPicker() {
       </button>
     `).join("")
     : '<p class="muted">검색 결과가 없습니다.</p>';
+
+  const selectAllButton = q("#participantSelectAllBtn");
+  const selectTop8Button = q("#participantSelectTop8Btn");
+  const clearButton = q("#participantClearBtn");
+  if (selectAllButton) selectAllButton.disabled = !players.length || selectedSet.size === players.length;
+  if (selectTop8Button) selectTop8Button.disabled = !players.length;
+  if (clearButton) clearButton.disabled = selectedSet.size === 0;
 }
 
 function toggleParticipantSelection(playerId) {
@@ -651,6 +737,10 @@ function bindRecordActions() {
   q("#loadRecordBtn").addEventListener("click", async () => {
     await loadRecordBySelect();
   });
+
+  q("#recordTournamentSelect").addEventListener("change", async () => {
+    await loadRecordBySelect();
+  });
 }
 
 async function loadRecordBySelect() {
@@ -680,17 +770,25 @@ async function loadRecordDefault() {
   await loadRecordBySelect();
 }
 
+async function loadPlayerStatsBySelect() {
+  const id = Number(q("#playerSelect").value || 0);
+  if (!id) return;
+  try {
+    const data = await withLoading(() => api(`/api/players/${id}/stats`), "선수 기록을 불러오는 중...");
+    state.playerStats = data;
+    renderPlayerStats();
+  } catch (err) {
+    showToast(err.message, true);
+  }
+}
+
 function bindPlayerActions() {
+  q("#playerSelect").addEventListener("change", async () => {
+    await loadPlayerStatsBySelect();
+  });
+
   q("#loadPlayerBtn").addEventListener("click", async () => {
-    const id = Number(q("#playerSelect").value || 0);
-    if (!id) return;
-    try {
-      const data = await withLoading(() => api(`/api/players/${id}/stats`), "선수 기록을 불러오는 중...");
-      state.playerStats = data;
-      renderPlayerStats();
-    } catch (err) {
-      showToast(err.message, true);
-    }
+    await loadPlayerStatsBySelect();
   });
 }
 
@@ -816,12 +914,25 @@ function bindAdminActions() {
 
 function renderRanking() {
   const root = q("#rankingTable");
+  const searchInput = q("#rankingSearchInput");
+  if (searchInput) searchInput.value = state.rankingQuery;
+
   if (!state.players.length) {
     root.innerHTML = '<p class="muted">선수가 없습니다.</p>';
     return;
   }
 
-  const rows = state.players.map((p) => `
+  const query = normalizeSearch(state.rankingQuery);
+  const filtered = query
+    ? state.players.filter((player) => normalizeSearch(player.name).includes(query))
+    : state.players;
+
+  if (!filtered.length) {
+    root.innerHTML = '<p class="muted">검색 조건에 맞는 선수가 없습니다.</p>';
+    return;
+  }
+
+  const rows = filtered.map((p) => `
     <tr>
       <td class="num-col">${p.rank}</td>
       <td>${p.name}</td>
@@ -829,26 +940,40 @@ function renderRanking() {
     </tr>
   `).join("");
 
-  root.innerHTML = `
+  root.innerHTML = tableWrap(`
     <table class="table">
       <thead><tr><th>순위</th><th>이름</th><th>ELO</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-  `;
+  `);
 }
 
 function renderRecentMatches() {
   const root = q("#recentMatches");
-  if (!state.recentMatches.length) {
-    root.innerHTML = '<p class="muted">최근 경기가 없습니다.</p>';
+  const filterSelect = q("#recentMatchFormatFilter");
+  if (filterSelect) filterSelect.value = state.recentMatchFormatFilter;
+
+  const formatFilter = state.recentMatchFormatFilter;
+  const matches = formatFilter === "ALL"
+    ? state.recentMatches
+    : state.recentMatches.filter((match) => match.matchFormat === formatFilter);
+
+  if (!matches.length) {
+    root.innerHTML = '<p class="muted">조건에 맞는 최근 경기가 없습니다.</p>';
     return;
   }
 
   root.innerHTML = `
     <div class="match-card-list">
-      ${state.recentMatches.map((m) => renderMatchResultCard(m, { withMeta: true })).join("")}
+      ${matches.map((m) => renderMatchResultCard(m, { withMeta: true })).join("")}
     </div>
   `;
+}
+
+function renderLastSyncAt() {
+  const target = q("#lastSyncAt");
+  if (!target) return;
+  target.textContent = `마지막 동기화: ${formatDateTime(state.lastSyncedAt)}`;
 }
 
 function renderQuickMetrics() {
@@ -913,12 +1038,12 @@ function renderTournament() {
       </tr>
     `).join("");
 
-  q("#openParticipants").innerHTML = `
+  q("#openParticipants").innerHTML = tableWrap(`
     <table class="table">
       <thead><tr><th>#</th><th>이름</th><th>ELO/점수</th></tr></thead>
       <tbody>${participantRows}</tbody>
     </table>
-  `;
+  `);
 
   q("#openMatches").innerHTML = open.matches.length
     ? `<div class="match-card-list">${open.matches.map((m) => renderMatchResultCard(
@@ -998,7 +1123,7 @@ function renderRecord() {
     <div class="grid two">
       <article class="card">
         <h3>ELO 변동</h3>
-        <table class="table"><thead><tr><th>선수</th><th>Before</th><th>Delta</th><th>After</th></tr></thead><tbody>${ratingRows}</tbody></table>
+        ${tableWrap(`<table class="table"><thead><tr><th>선수</th><th>Before</th><th>Delta</th><th>After</th></tr></thead><tbody>${ratingRows}</tbody></table>`)}
       </article>
       <article class="card">
         <h3>경기 결과</h3>
@@ -1020,7 +1145,7 @@ function renderPlayerStats() {
   const s = state.playerStats;
   const matches = s.matches.map((m) => `
     <tr>
-      <td>${m.tournamentDate}</td><td>${m.tournamentName}</td><td>${m.matchFormat}</td>
+      <td>${m.tournamentDate}</td><td>${m.tournamentName}</td><td>${matchFormatLabel(m.matchFormat)}</td>
       <td>${m.myTeamName}</td><td>${m.myScore}:${m.opponentScore}</td><td>${m.opponentTeamName}</td>
       <td><span class="badge ${m.result.toLowerCase()}">${m.result}</span></td>
     </tr>
@@ -1042,16 +1167,16 @@ function renderPlayerStats() {
     <div class="grid two">
       <article class="card">
         <h3>경기 기록</h3>
-        <table class="table"><thead><tr><th>날짜</th><th>대회</th><th>형식</th><th>내 팀</th><th>스코어</th><th>상대</th><th>결과</th></tr></thead><tbody>${matches}</tbody></table>
+        ${tableWrap(`<table class="table"><thead><tr><th>날짜</th><th>대회</th><th>형식</th><th>내 팀</th><th>스코어</th><th>상대</th><th>결과</th></tr></thead><tbody>${matches}</tbody></table>`)}
       </article>
       <article class="card">
         <h3>ELO 이력</h3>
-        <table class="table"><thead><tr><th>날짜</th><th>타입</th><th>Before</th><th>Delta</th><th>After</th></tr></thead><tbody>${events}</tbody></table>
+        ${tableWrap(`<table class="table"><thead><tr><th>날짜</th><th>타입</th><th>Before</th><th>Delta</th><th>After</th></tr></thead><tbody>${events}</tbody></table>`)}
       </article>
     </div>
     <article class="card">
       <h3>상대 전적(단식)</h3>
-      <table class="table"><thead><tr><th>상대</th><th>경기</th><th>승</th><th>패</th><th>무</th></tr></thead><tbody>${opponents}</tbody></table>
+      ${tableWrap(`<table class="table"><thead><tr><th>상대</th><th>경기</th><th>승</th><th>패</th><th>무</th></tr></thead><tbody>${opponents}</tbody></table>`)}
     </article>
   `;
 }
@@ -1094,11 +1219,11 @@ function renderStats() {
     <div class="grid two">
       <article class="card">
         <h3>상위 랭킹</h3>
-        <table class="table"><thead><tr><th>#</th><th>선수</th><th>ELO</th></tr></thead><tbody>${topRows}</tbody></table>
+        ${tableWrap(`<table class="table"><thead><tr><th>#</th><th>선수</th><th>ELO</th></tr></thead><tbody>${topRows}</tbody></table>`)}
       </article>
       <article class="card">
         <h3>최근 대회</h3>
-        <table class="table"><thead><tr><th>날짜</th><th>대회</th><th>상태</th><th>경기수</th></tr></thead><tbody>${tourRows}</tbody></table>
+        ${tableWrap(`<table class="table"><thead><tr><th>날짜</th><th>대회</th><th>상태</th><th>경기수</th></tr></thead><tbody>${tourRows}</tbody></table>`)}
       </article>
     </div>
   `;
@@ -1109,7 +1234,12 @@ function renderAdmin() {
   const playerSelect = q("#adminPlayerSelect");
   const playerMeta = q("#adminPlayerMeta");
   const playersTableRoot = q("#adminPlayersTable");
+  const queryInput = q("#adminPlayerSearchInput");
+  const statusFilter = q("#adminPlayerStatusFilter");
   if (!ruleRoot || !playerSelect || !playerMeta || !playersTableRoot) return;
+
+  if (queryInput) queryInput.value = state.adminPlayerQuery;
+  if (statusFilter) statusFilter.value = state.adminPlayerStatusFilter;
 
   const rules = getTournamentRules();
   ruleRoot.innerHTML = rules.map((rule) => `
@@ -1163,7 +1293,21 @@ function renderAdmin() {
     return;
   }
 
-  const rows = state.adminPlayers.map((player) => `
+  const query = normalizeSearch(state.adminPlayerQuery);
+  const filteredPlayers = state.adminPlayers.filter((player) => {
+    const nameMatched = !query || normalizeSearch(player.name).includes(query);
+    const statusMatched = state.adminPlayerStatusFilter === "ALL"
+      || (state.adminPlayerStatusFilter === "ACTIVE" && player.isActive)
+      || (state.adminPlayerStatusFilter === "INACTIVE" && !player.isActive);
+    return nameMatched && statusMatched;
+  });
+
+  if (!filteredPlayers.length) {
+    playersTableRoot.innerHTML = '<p class="muted">필터 조건에 맞는 선수가 없습니다.</p>';
+    return;
+  }
+
+  const rows = filteredPlayers.map((player) => `
     <tr>
       <td class="num-col">${player.id}</td>
       <td>${player.name}</td>
@@ -1175,12 +1319,12 @@ function renderAdmin() {
     </tr>
   `).join("");
 
-  playersTableRoot.innerHTML = `
+  playersTableRoot.innerHTML = tableWrap(`
     <table class="table">
       <thead><tr><th>ID</th><th>이름</th><th>ELO</th><th>상태</th><th>OPEN 대회</th><th>기록 경기수</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-  `;
+  `);
 }
 
 function renderDashboard() {
@@ -1192,6 +1336,7 @@ function renderDashboard() {
 function renderAll() {
   renderTournamentTypeSelectOptions();
   renderQuickMetrics();
+  renderLastSyncAt();
   renderDashboard();
   renderTournament();
   renderRecord();
@@ -1203,9 +1348,11 @@ function renderAll() {
 async function init() {
   bindTabEvents();
   bindGlobalActions();
+  bindDashboardFilters();
   bindPlayerForm();
   bindSimForm();
   bindTournamentParticipantPicker();
+  bindParticipantPickerActions();
   bindTournamentCreateForm();
   bindMatchForm();
   bindTournamentActionButtons();
@@ -1213,6 +1360,7 @@ async function init() {
   bindPlayerActions();
   bindStatsActions();
   bindAdminActions();
+  bindAdminFilters();
 
   q("#tournamentDate").value = new Date().toISOString().slice(0, 10);
   toggleDoubleInputs();

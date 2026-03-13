@@ -44,6 +44,7 @@
         </div>
         <div class="topbar-actions">
           <button id="refreshAllBtn" type="button" class="ghost-btn">전체 동기화</button>
+          <div id="lastSyncAt" class="sync-note">마지막 동기화: -</div>
           <div class="status-box" id="healthStatus" role="status" aria-live="polite">API 확인 중...</div>
         </div>
       </header>
@@ -106,10 +107,22 @@
           <div class="grid two">
             <article class="card">
               <h2>현재 랭킹</h2>
+              <div class="card-tools">
+                <input id="rankingSearchInput" placeholder="선수 이름 검색" />
+              </div>
               <div id="rankingTable"></div>
             </article>
             <article class="card">
               <h2>최근 경기</h2>
+              <div class="card-tools">
+                <label class="compact-label">형식 필터
+                  <select id="recentMatchFormatFilter">
+                    <option value="ALL">전체</option>
+                    <option value="SINGLES">단식</option>
+                    <option value="DOUBLES">복식</option>
+                  </select>
+                </label>
+              </div>
               <div id="recentMatches"></div>
             </article>
           </div>
@@ -137,6 +150,11 @@
                   </div>
                   <input id="participantSearchInput" placeholder="선수 이름 검색 (Enter: 첫 결과 빠른 추가)" />
                   <p class="muted">선수 버튼을 누르면 선택, 다시 누르면 선택 해제됩니다.</p>
+                  <div class="picker-actions">
+                    <button type="button" id="participantSelectAllBtn" class="ghost-btn mini-btn">전체 선택</button>
+                    <button type="button" id="participantSelectTop8Btn" class="ghost-btn mini-btn">상위 8명</button>
+                    <button type="button" id="participantClearBtn" class="ghost-btn mini-btn">선택 초기화</button>
+                  </div>
                   <div id="participantSelectedList" class="selected-chips"></div>
                   <div id="participantPickList" class="pick-list"></div>
                 </div>
@@ -265,6 +283,14 @@
 
           <article class="card">
             <h2>선수 현황</h2>
+            <div class="card-tools admin-tools">
+              <input id="adminPlayerSearchInput" placeholder="선수 이름 검색" />
+              <select id="adminPlayerStatusFilter">
+                <option value="ALL">전체 상태</option>
+                <option value="ACTIVE">활성</option>
+                <option value="INACTIVE">비활성</option>
+              </select>
+            </div>
             <div id="adminPlayersTable"></div>
           </article>
         </section>
