@@ -406,6 +406,43 @@ function bindTournamentParticipantPicker() {
   });
 }
 
+function syncMatchFormatToggle() {
+  const formatSelect = q("#matchFormat");
+  const toggleRoot = q("#matchFormatToggle");
+  if (!formatSelect || !toggleRoot) return;
+
+  const value = formatSelect.value || "SINGLES";
+  toggleRoot.querySelectorAll("button[data-format]").forEach((button) => {
+    const isActive = button.dataset.format === value;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
+function setMatchFormat(value, options = {}) {
+  const { triggerChange = true } = options;
+  const formatSelect = q("#matchFormat");
+  if (!formatSelect) return;
+
+  const nextValue = value === "DOUBLES" ? "DOUBLES" : "SINGLES";
+  const changed = formatSelect.value !== nextValue;
+  formatSelect.value = nextValue;
+
+  if (changed && triggerChange) {
+    formatSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+
+  syncMatchFormatToggle();
+}
+
+function setDoublesToggleAvailability(enabled) {
+  const doublesButton = q("#matchFormatToggle button[data-format='DOUBLES']");
+  if (!doublesButton) return;
+  doublesButton.disabled = !enabled;
+  doublesButton.title = enabled ? "" : "복식은 참가자 4명 이상일 때 선택할 수 있습니다.";
+}
+
 function toggleDoubleInputs() {
   const doubles = q("#matchFormat").value === "DOUBLES";
   document.querySelectorAll(".team2").forEach((el) => {
@@ -416,6 +453,21 @@ function toggleDoubleInputs() {
   const teamB2 = q("#matchB2");
   if (teamA2) teamA2.disabled = !doubles;
   if (teamB2) teamB2.disabled = !doubles;
+  syncMatchFormatToggle();
+}
+
+function readMatchPayloadFromForm() {
+  const matchFormat = q("#matchFormat").value;
+  const isDoubles = matchFormat === "DOUBLES";
+  return {
+    matchFormat,
+    teamAPlayer1Id: Number(q("#matchA1").value),
+    teamAPlayer2Id: isDoubles ? Number(q("#matchA2").value) : null,
+    teamBPlayer1Id: Number(q("#matchB1").value),
+    teamBPlayer2Id: isDoubles ? Number(q("#matchB2").value) : null,
+    scoreA: Number(q("#matchScoreA").value || 0),
+    scoreB: Number(q("#matchScoreB").value || 0),
+  };
 }
 
 function setSelectValueIfPossible(selectEl, value) {
@@ -508,11 +560,24 @@ function bindTournamentCreateForm() {
 }
 
 function bindMatchForm() {
-  q("#matchFormat").addEventListener("change", () => {
+  const formatSelect = q("#matchFormat");
+  const formatToggle = q("#matchFormatToggle");
+
+  formatSelect.addEventListener("change", () => {
     if (state.openTournament?.participants?.length) {
-      applyMatchSelectDefaults(state.openTournament.participants);
+      const draftPayload = readMatchPayloadFromForm();
+      const isInvalid = Boolean(validateMatchPayload({ ...draftPayload, scoreA: 1, scoreB: 0 }));
+      if (isInvalid) {
+        applyMatchSelectDefaults(state.openTournament.participants);
+      }
     }
     toggleDoubleInputs();
+  });
+
+  formatToggle.addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-format]");
+    if (!button || button.disabled) return;
+    setMatchFormat(button.dataset.format);
   });
 
   q("#matchForm").addEventListener("submit", async (e) => {
@@ -523,18 +588,7 @@ function bindMatchForm() {
     }
 
     try {
-      const matchFormat = q("#matchFormat").value;
-      const isDoubles = matchFormat === "DOUBLES";
-
-      const payload = {
-        matchFormat,
-        teamAPlayer1Id: Number(q("#matchA1").value),
-        teamAPlayer2Id: isDoubles ? Number(q("#matchA2").value) : null,
-        teamBPlayer1Id: Number(q("#matchB1").value),
-        teamBPlayer2Id: isDoubles ? Number(q("#matchB2").value) : null,
-        scoreA: Number(q("#matchScoreA").value || 0),
-        scoreB: Number(q("#matchScoreB").value || 0),
-      };
+      const payload = readMatchPayloadFromForm();
 
       const validationError = validateMatchPayload(payload);
       if (validationError) {
@@ -549,6 +603,8 @@ function bindMatchForm() {
       showToast(err.message, true);
     }
   });
+
+  syncMatchFormatToggle();
 }
 
 function bindTournamentActionButtons() {
@@ -828,6 +884,8 @@ function renderTournament() {
     q("#openParticipants").innerHTML = '<p class="muted">대회 시작 후 표시됩니다.</p>';
     q("#openMatches").innerHTML = '<p class="muted">대회 시작 후 표시됩니다.</p>';
     q("#matchForm").querySelectorAll("input,select,button").forEach((el) => { el.disabled = true; });
+    setDoublesToggleAvailability(false);
+    setMatchFormat("SINGLES", { triggerChange: false });
     q("#finalizeTournamentBtn").disabled = true;
     q("#cancelTournamentBtn").disabled = true;
     return;
@@ -888,9 +946,7 @@ function renderTournament() {
   const doublesOption = formatSelect.querySelector("option[value='DOUBLES']");
   const doublesAvailable = open.participants.length >= 4;
   if (doublesOption) doublesOption.disabled = !doublesAvailable;
-  if (!doublesAvailable && formatSelect.value === "DOUBLES") {
-    formatSelect.value = "SINGLES";
-  }
+  if (!doublesAvailable && formatSelect.value === "DOUBLES") setMatchFormat("SINGLES", { triggerChange: false });
 
   const currentPayload = {
     matchFormat: formatSelect.value,
@@ -906,6 +962,7 @@ function renderTournament() {
   }
 
   q("#matchForm").querySelectorAll("input,select,button").forEach((el) => { el.disabled = false; });
+  setDoublesToggleAvailability(doublesAvailable);
   q("#finalizeTournamentBtn").disabled = false;
   q("#cancelTournamentBtn").disabled = false;
   toggleDoubleInputs();

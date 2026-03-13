@@ -154,19 +154,35 @@
           <article class="card" id="matchCard">
             <h2>경기 기록</h2>
             <form id="matchForm" class="match-grid">
-              <label>형식
-                <select id="matchFormat">
+              <div class="match-format-row">
+                <span class="match-format-label">형식</span>
+                <div class="format-toggle" id="matchFormatToggle" role="group" aria-label="경기 형식 선택">
+                  <button type="button" class="format-toggle-btn active" data-format="SINGLES" aria-pressed="true">단식</button>
+                  <button type="button" class="format-toggle-btn" data-format="DOUBLES" aria-pressed="false">복식</button>
+                </div>
+                <select id="matchFormat" class="visually-hidden" aria-hidden="true" tabindex="-1">
                   <option value="SINGLES">SINGLES</option>
                   <option value="DOUBLES">DOUBLES</option>
                 </select>
-              </label>
-              <label>팀 A 선수1<select id="matchA1"></select></label>
-              <label class="team2">팀 A 선수2<select id="matchA2"></select></label>
-              <label>팀 B 선수1<select id="matchB1"></select></label>
-              <label class="team2">팀 B 선수2<select id="matchB2"></select></label>
-              <label>점수 A<input id="matchScoreA" type="number" min="0" value="6" /></label>
-              <label>점수 B<input id="matchScoreB" type="number" min="0" value="4" /></label>
-              <button type="submit">경기 추가</button>
+              </div>
+
+              <div class="match-entry-columns">
+                <section class="match-entry-col team-a-col">
+                  <h3>팀 A</h3>
+                  <label>선수 1<select id="matchA1"></select></label>
+                  <label class="team2">선수 2<select id="matchA2"></select></label>
+                  <label class="team-score-label">점수<input id="matchScoreA" type="number" min="0" value="6" /></label>
+                </section>
+
+                <section class="match-entry-col team-b-col">
+                  <h3>팀 B</h3>
+                  <label>선수 1<select id="matchB1"></select></label>
+                  <label class="team2">선수 2<select id="matchB2"></select></label>
+                  <label class="team-score-label">점수<input id="matchScoreB" type="number" min="0" value="4" /></label>
+                </section>
+              </div>
+
+              <button type="submit" class="match-submit-btn">경기 추가</button>
             </form>
           </article>
 
