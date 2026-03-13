@@ -1,8 +1,9 @@
 ﻿:root {
   color-scheme: light;
-  --bg-1: #eef3fb;
-  --bg-2: #dde8f4;
-  --bg-3: #f7fbff;
+  --bg-1: #eff4fb;
+  --bg-2: #dce7f5;
+  --bg-3: #f9fcff;
+  --bg-4: #d7e6f8;
   --surface: #ffffff;
   --surface-soft: #f6f9fd;
   --surface-tint: #eef4fa;
@@ -15,6 +16,9 @@
   --accent-soft: #dff6f3;
   --warning: #f6c15a;
   --danger: #cc3d58;
+  --shine: rgba(255, 255, 255, 0.62);
+  --glow-accent: rgba(15, 155, 144, 0.34);
+  --glow-blue: rgba(64, 122, 198, 0.26);
   --shadow-lg: 0 22px 50px -32px rgba(8, 24, 45, 0.46);
   --shadow-sm: 0 10px 24px -18px rgba(10, 23, 41, 0.36);
   --radius-xl: 24px;
@@ -37,7 +41,21 @@ body {
   padding: 18px;
   font-family: "Noto Sans KR", "Sora", sans-serif;
   color: var(--ink);
-  background: radial-gradient(circle at 12% 8%, var(--bg-3) 0%, var(--bg-1) 40%, var(--bg-2) 100%);
+  background:
+    radial-gradient(circle at 12% 8%, var(--bg-3) 0%, var(--bg-1) 34%, var(--bg-2) 74%, var(--bg-4) 100%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0));
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.24;
+  background-image: radial-gradient(circle at 2px 2px, rgba(69, 93, 124, 0.16) 1px, transparent 0);
+  background-size: 24px 24px;
+  z-index: -1;
 }
 
 h1,
@@ -118,8 +136,9 @@ p {
   padding: 14px;
   border: 1px solid rgba(15, 27, 45, 0.12);
   border-radius: var(--radius-xl);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(242, 248, 253, 0.88));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(240, 247, 254, 0.9));
   box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(6px);
 }
 
 .brand-card {
@@ -155,6 +174,8 @@ p {
 
 .tab {
   width: 100%;
+  position: relative;
+  overflow: hidden;
   text-align: left;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -172,10 +193,25 @@ p {
   box-shadow: var(--shadow-sm);
 }
 
+.tab::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0) 0%, var(--shine) 48%, rgba(255, 255, 255, 0) 100%);
+  transform: translateX(-130%);
+  transition: transform 320ms ease;
+  pointer-events: none;
+}
+
+.tab:hover::before {
+  transform: translateX(130%);
+}
+
 .tab.active {
   border-color: transparent;
-  background: linear-gradient(135deg, var(--accent), #12b7aa);
+  background: linear-gradient(135deg, var(--accent), #12b7aa 65%, #1bc5b7 100%);
   color: #ffffff;
+  box-shadow: 0 12px 22px -14px var(--glow-accent);
 }
 
 .side-note {
@@ -203,8 +239,22 @@ p {
   border: 1px solid rgba(15, 27, 45, 0.12);
   border-radius: var(--radius-xl);
   padding: 18px 20px;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.95), rgba(236, 246, 252, 0.9));
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.96), rgba(234, 246, 252, 0.92));
   box-shadow: var(--shadow-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.topbar::after {
+  content: "";
+  position: absolute;
+  top: -34px;
+  right: -28px;
+  width: 130px;
+  height: 130px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, rgba(15, 155, 144, 0.22), rgba(15, 155, 144, 0));
+  pointer-events: none;
 }
 
 .topbar-main h2 {
@@ -243,6 +293,29 @@ p {
   padding: 9px 13px;
   color: #ffffff;
   background: #3b4f63;
+  box-shadow: 0 8px 18px -14px rgba(23, 39, 56, 0.95);
+  position: relative;
+  overflow: hidden;
+}
+
+.status-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.42) 52%, rgba(255, 255, 255, 0) 100%);
+  transform: translateX(-120%);
+  animation: sweep 2.9s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  0%,
+  30% {
+    transform: translateX(-130%);
+  }
+  60%,
+  100% {
+    transform: translateX(140%);
+  }
 }
 
 .quick-stats {
@@ -258,9 +331,10 @@ p {
   gap: 6px;
   border-radius: var(--radius-lg);
   border: 1px solid rgba(15, 27, 45, 0.1);
-  background: linear-gradient(150deg, #ffffff 0%, #f1f8ff 100%);
+  background: linear-gradient(150deg, #ffffff 0%, #f1f8ff 72%, #e9f3ff 100%);
   padding: 14px;
   box-shadow: var(--shadow-sm);
+  transition: transform 180ms ease, box-shadow 180ms ease;
 }
 
 .metric-card::after {
@@ -273,6 +347,11 @@ p {
   border-radius: 999px;
   background: radial-gradient(circle at 30% 30%, rgba(15, 155, 144, 0.24), rgba(15, 155, 144, 0));
   pointer-events: none;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 30px -24px rgba(18, 55, 86, 0.64);
 }
 
 .metric-card span {
@@ -329,16 +408,34 @@ main {
 }
 
 .card {
+  position: relative;
+  overflow: hidden;
   border-radius: var(--radius-lg);
   border: 1px solid rgba(15, 27, 45, 0.12);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(245, 250, 255, 0.84));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 250, 255, 0.88));
   box-shadow: var(--shadow-sm);
   padding: 16px;
   min-width: 0;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: #b8cee4;
+  box-shadow: 0 18px 34px -24px rgba(10, 26, 48, 0.55);
 }
 
 .accent-card {
-  background: linear-gradient(160deg, #fbfffd 0%, #e8fbf7 100%);
+  background: linear-gradient(160deg, #fbfffd 0%, #e8fbf7 74%, #ddf8f2 100%);
 }
 
 .card h2 {
@@ -374,9 +471,10 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 11px 12px;
-  background: #ffffff;
+  background: linear-gradient(180deg, #ffffff, #f7fbff);
   color: var(--ink);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.9);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
 input::placeholder {
@@ -385,7 +483,8 @@ input::placeholder {
 
 input:hover,
 select:hover {
-  border-color: #b2c6db;
+  border-color: #9fbad5;
+  background: #ffffff;
 }
 
 input:focus,
@@ -400,17 +499,38 @@ button {
   border: 0;
   border-radius: var(--radius-sm);
   padding: 11px 14px;
-  background: linear-gradient(135deg, var(--accent) 0%, #13b4a7 100%);
+  background: linear-gradient(135deg, #10a89c 0%, #13b4a7 55%, #19c8bb 100%);
   color: #ffffff;
   font-weight: 700;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
   transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
 }
 
 button:hover {
   transform: translateY(-1px);
-  filter: brightness(0.99);
-  box-shadow: 0 10px 20px -15px rgba(15, 155, 144, 0.9);
+  filter: brightness(1.01);
+  box-shadow: 0 13px 24px -15px rgba(15, 155, 144, 0.95);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, rgba(255, 255, 255, 0) 0%, var(--shine) 48%, rgba(255, 255, 255, 0) 100%);
+  transform: translateX(-140%);
+  transition: transform 380ms ease;
+  z-index: -1;
+}
+
+button:hover::before {
+  transform: translateX(140%);
 }
 
 button:disabled {
@@ -422,16 +542,17 @@ button:disabled {
 
 button.ghost-btn {
   border: 1px solid var(--line-strong);
-  background: linear-gradient(135deg, #ffffff, #eef6ff);
+  background: linear-gradient(135deg, #ffffff, #eef6ff 60%, #e8f3ff 100%);
   color: #24405a;
+  box-shadow: 0 6px 14px -14px rgba(36, 64, 90, 0.72);
 }
 
 button.danger {
-  background: linear-gradient(135deg, var(--danger), #b03149);
+  background: linear-gradient(135deg, var(--danger), #b03149 68%, #d84f6a 100%);
 }
 
 button.primary {
-  background: linear-gradient(135deg, var(--warning), #f4a73d);
+  background: linear-gradient(135deg, var(--warning), #f4a73d 62%, #ffcc65 100%);
   color: #3a2a10;
 }
 
@@ -544,6 +665,10 @@ button.primary {
   transform: none;
   box-shadow: none;
   background: #eef4fb;
+}
+
+.format-toggle-btn::before {
+  display: none;
 }
 
 .format-toggle-btn.active {
@@ -705,6 +830,7 @@ button.primary {
   padding: 13px;
   background: linear-gradient(155deg, rgba(255, 255, 255, 0.97), rgba(232, 244, 255, 0.85));
   box-shadow: 0 18px 28px -22px rgba(10, 26, 48, 0.7);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
 
 .match-result-card::before {
@@ -713,6 +839,12 @@ button.primary {
   inset: 0;
   background: linear-gradient(135deg, rgba(15, 155, 144, 0.08), rgba(15, 155, 144, 0));
   pointer-events: none;
+}
+
+.match-result-card:hover {
+  transform: translateY(-2px);
+  border-color: #b7cee5;
+  box-shadow: 0 22px 30px -24px rgba(10, 26, 48, 0.78);
 }
 
 .match-result-head {
@@ -774,6 +906,12 @@ button.primary {
   border-radius: 12px;
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.92);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.match-result-card:hover .match-team-line {
+  border-color: #c7d9ea;
+  box-shadow: 0 8px 16px -18px rgba(20, 48, 71, 0.82);
 }
 
 .match-team-name {
@@ -892,7 +1030,22 @@ button.primary {
   overflow: auto;
   border: 1px solid rgba(15, 27, 45, 0.08);
   border-radius: 12px;
-  background: #ffffff;
+  background: linear-gradient(180deg, #ffffff, #f9fcff);
+}
+
+.table-wrap::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.table-wrap::-webkit-scrollbar-track {
+  background: #e9f1fa;
+  border-radius: 999px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #9eb9d5, #86a8ca);
+  border-radius: 999px;
 }
 
 .table th,
