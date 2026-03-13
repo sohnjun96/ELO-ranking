@@ -16,6 +16,10 @@
     selectedIds: [],
     query: "",
   },
+  loading: {
+    count: 0,
+    message: "데이터를 동기화하는 중...",
+  },
 };
 
 const DEFAULT_RULES = [
@@ -71,6 +75,13 @@ function matchFormatLabel(format) {
   return format === "DOUBLES" ? "복식" : "단식";
 }
 
+function tournamentStatusLabel(status) {
+  if (status === "OPEN") return "진행중";
+  if (status === "FINALIZED") return "종료";
+  if (status === "CANCELED") return "취소";
+  return String(status || "-");
+}
+
 function renderMatchResultCard(match, options = {}) {
   const withMeta = options.withMeta !== false;
   const showDelete = Boolean(options.showDelete);
@@ -116,6 +127,34 @@ function showToast(message, isError = false) {
   setTimeout(() => el.classList.remove("show"), 2200);
 }
 
+function setLoading(isOn, message = "데이터를 동기화하는 중...") {
+  const overlay = q("#appLoading");
+  if (!overlay) return;
+
+  if (isOn) {
+    state.loading.count += 1;
+    state.loading.message = message;
+  } else {
+    state.loading.count = Math.max(0, state.loading.count - 1);
+  }
+
+  const active = state.loading.count > 0;
+  overlay.classList.toggle("show", active);
+  overlay.setAttribute("aria-hidden", active ? "false" : "true");
+
+  const messageEl = overlay.querySelector("strong");
+  if (messageEl) messageEl.textContent = state.loading.message;
+}
+
+async function withLoading(work, message) {
+  setLoading(true, message);
+  try {
+    return await work();
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function api(path, method = "GET", body) {
   const res = await fetch(path, {
     method,
@@ -146,6 +185,21 @@ function bindTabEvents() {
     const btn = e.target.closest(".tab");
     if (!btn) return;
     setTab(btn.dataset.tab);
+  });
+}
+
+function bindGlobalActions() {
+  const refreshButton = q("#refreshAllBtn");
+  if (!refreshButton) return;
+
+  refreshButton.addEventListener("click", async () => {
+    try {
+      await checkHealth();
+      await refreshAll({ loadingMessage: "전체 데이터를 갱신하는 중..." });
+      showToast("전체 동기화 완료");
+    } catch (err) {
+      showToast(err.message, true);
+    }
   });
 }
 
@@ -229,9 +283,12 @@ async function refreshAdminPlayers() {
   }
 }
 
-async function refreshAll() {
-  await Promise.all([refreshBootstrap(), refreshTournaments(), refreshOverview(), refreshAdminPlayers()]);
-  renderAll();
+async function refreshAll(options = {}) {
+  const { loadingMessage = "데이터를 동기화하는 중..." } = options;
+  return withLoading(async () => {
+    await Promise.all([refreshBootstrap(), refreshTournaments(), refreshOverview(), refreshAdminPlayers()]);
+    renderAll();
+  }, loadingMessage);
 }
 
 async function checkHealth() {
@@ -361,6 +418,53 @@ function toggleDoubleInputs() {
   if (teamB2) teamB2.disabled = !doubles;
 }
 
+function setSelectValueIfPossible(selectEl, value) {
+  if (!selectEl || value == null) return;
+  const stringValue = String(value);
+  const hasOption = [...selectEl.options].some((option) => option.value === stringValue);
+  if (hasOption) selectEl.value = stringValue;
+}
+
+function applyMatchSelectDefaults(participants) {
+  const ids = participants.map((player) => Number(player.playerId)).filter((id) => Number.isInteger(id));
+  if (!ids.length) return;
+
+  const a1 = ids[0] ?? null;
+  const b1 = ids[1] ?? ids[0] ?? null;
+  const a2 = ids[2] ?? ids[0] ?? null;
+  const b2 = ids[3] ?? ids[1] ?? ids[0] ?? null;
+
+  setSelectValueIfPossible(q("#matchA1"), a1);
+  setSelectValueIfPossible(q("#matchB1"), b1);
+  setSelectValueIfPossible(q("#matchA2"), a2);
+  setSelectValueIfPossible(q("#matchB2"), b2);
+}
+
+function validateMatchPayload(payload) {
+  if (!payload.teamAPlayer1Id || !payload.teamBPlayer1Id) {
+    return "팀별 선수1을 선택하세요.";
+  }
+
+  if (payload.scoreA + payload.scoreB <= 0) {
+    return "점수 합계는 1 이상이어야 합니다.";
+  }
+
+  const playerIds = [payload.teamAPlayer1Id, payload.teamBPlayer1Id];
+  if (payload.matchFormat === "DOUBLES") {
+    if (!payload.teamAPlayer2Id || !payload.teamBPlayer2Id) {
+      return "복식은 팀별 선수 2명이 필요합니다.";
+    }
+    playerIds.push(payload.teamAPlayer2Id, payload.teamBPlayer2Id);
+  }
+
+  const unique = new Set(playerIds.map((value) => Number(value)));
+  if (unique.size !== playerIds.length) {
+    return "한 경기에서 같은 선수를 중복 선택할 수 없습니다.";
+  }
+
+  return null;
+}
+
 function bindPlayerForm() {
   q("#playerForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -370,7 +474,7 @@ function bindPlayerForm() {
       await api("/api/players", "POST", { name });
       q("#playerNameInput").value = "";
       showToast("선수 등록 완료");
-      await refreshAll();
+      await refreshAll({ loadingMessage: "선수 목록을 갱신하는 중..." });
     } catch (err) {
       showToast(err.message, true);
     }
@@ -395,7 +499,7 @@ function bindTournamentCreateForm() {
       state.participantPicker.selectedIds = [];
       state.participantPicker.query = "";
       showToast("대회 시작 완료");
-      await refreshAll();
+      await refreshAll({ loadingMessage: "대회 데이터를 준비하는 중..." });
       setTab("tournament");
     } catch (err) {
       showToast(err.message, true);
@@ -404,7 +508,12 @@ function bindTournamentCreateForm() {
 }
 
 function bindMatchForm() {
-  q("#matchFormat").addEventListener("change", toggleDoubleInputs);
+  q("#matchFormat").addEventListener("change", () => {
+    if (state.openTournament?.participants?.length) {
+      applyMatchSelectDefaults(state.openTournament.participants);
+    }
+    toggleDoubleInputs();
+  });
 
   q("#matchForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -426,11 +535,16 @@ function bindMatchForm() {
         scoreA: Number(q("#matchScoreA").value || 0),
         scoreB: Number(q("#matchScoreB").value || 0),
       };
+
+      const validationError = validateMatchPayload(payload);
+      if (validationError) {
+        showToast(validationError, true);
+        return;
+      }
+
       await api(`/api/tournaments/${state.openTournament.id}/matches`, "POST", payload);
       showToast("경기 추가 완료");
-      await refreshBootstrap();
-      renderTournament();
-      renderDashboard();
+      await refreshAll({ loadingMessage: "대회 데이터를 갱신하는 중..." });
     } catch (err) {
       showToast(err.message, true);
     }
@@ -444,7 +558,7 @@ function bindTournamentActionButtons() {
     try {
       await api(`/api/tournaments/${state.openTournament.id}/finalize`, "POST");
       showToast("대회 종료 완료");
-      await refreshAll();
+      await refreshAll({ loadingMessage: "대회 종료 결과를 반영하는 중..." });
       await loadRecordDefault();
     } catch (err) {
       showToast(err.message, true);
@@ -457,7 +571,7 @@ function bindTournamentActionButtons() {
     try {
       await api(`/api/tournaments/${state.openTournament.id}/cancel`, "POST");
       showToast("대회 취소 완료");
-      await refreshAll();
+      await refreshAll({ loadingMessage: "대회 상태를 갱신하는 중..." });
     } catch (err) {
       showToast(err.message, true);
     }
@@ -470,9 +584,7 @@ function bindTournamentActionButtons() {
     try {
       await api(`/api/tournaments/${state.openTournament.id}/matches/${btn.dataset.deleteId}`, "DELETE");
       showToast("경기 삭제 완료");
-      await refreshBootstrap();
-      renderTournament();
-      renderDashboard();
+      await refreshAll({ loadingMessage: "대회 데이터를 갱신하는 중..." });
     } catch (err) {
       showToast(err.message, true);
     }
@@ -493,7 +605,7 @@ async function loadRecordBySelect() {
     return;
   }
   try {
-    const data = await api(`/api/tournaments/${id}/report`);
+    const data = await withLoading(() => api(`/api/tournaments/${id}/report`), "대회 기록을 불러오는 중...");
     state.recordTournament = data.tournament;
     renderRecord();
   } catch (err) {
@@ -517,7 +629,7 @@ function bindPlayerActions() {
     const id = Number(q("#playerSelect").value || 0);
     if (!id) return;
     try {
-      const data = await api(`/api/players/${id}/stats`);
+      const data = await withLoading(() => api(`/api/players/${id}/stats`), "선수 기록을 불러오는 중...");
       state.playerStats = data;
       renderPlayerStats();
     } catch (err) {
@@ -529,8 +641,9 @@ function bindPlayerActions() {
 function bindStatsActions() {
   q("#refreshStatsBtn").addEventListener("click", async () => {
     try {
-      await refreshOverview();
+      await withLoading(() => refreshOverview(), "통계를 갱신하는 중...");
       renderStats();
+      renderQuickMetrics();
       showToast("통계 갱신 완료");
     } catch (err) {
       showToast(err.message, true);
@@ -569,7 +682,7 @@ function bindAdminActions() {
       await api(`/api/admin/players/${player.id}`, "PATCH", { name });
       q("#adminRenameInput").value = "";
       showToast("선수 이름 변경 완료");
-      await refreshAll();
+      await refreshAll({ loadingMessage: "선수 데이터를 갱신하는 중..." });
     } catch (err) {
       showToast(err.message, true);
     }
@@ -593,7 +706,7 @@ function bindAdminActions() {
       await api(`/api/admin/players/${player.id}`, "PATCH", { currentElo: Number(eloRaw) });
       q("#adminEloInput").value = "";
       showToast("선수 점수 조정 완료");
-      await refreshAll();
+      await refreshAll({ loadingMessage: "점수 변경 내용을 반영하는 중..." });
     } catch (err) {
       showToast(err.message, true);
     }
@@ -610,7 +723,7 @@ function bindAdminActions() {
     try {
       await api(`/api/admin/players/${player.id}`, "DELETE");
       showToast("선수 비활성화 완료");
-      await refreshAll();
+      await refreshAll({ loadingMessage: "선수 목록을 갱신하는 중..." });
       renderAdmin();
     } catch (err) {
       showToast(err.message, true);
@@ -631,7 +744,7 @@ function bindAdminActions() {
         basePoints: Number(baseInput.value),
       });
       showToast(`${tournamentTypeLabel(type)} 규칙 저장 완료`);
-      await refreshAll();
+      await refreshAll({ loadingMessage: "대회 규칙을 반영하는 중..." });
     } catch (err) {
       showToast(err.message, true);
     }
@@ -680,6 +793,23 @@ function renderRecentMatches() {
       ${state.recentMatches.map((m) => renderMatchResultCard(m, { withMeta: true })).join("")}
     </div>
   `;
+}
+
+function renderQuickMetrics() {
+  const summary = state.overview?.summary;
+  const players = summary?.players ?? state.players.length;
+  const openTournaments = summary?.openTournaments ?? (state.openTournament ? 1 : 0);
+  const finalizedTournaments = summary?.finalizedTournaments ?? state.tournaments.filter((t) => t.status === "FINALIZED").length;
+  const finalizedMatches = summary?.finalizedMatches ?? 0;
+
+  const playersEl = q("#metricPlayers");
+  const openEl = q("#metricOpenTournaments");
+  const finalizedEl = q("#metricFinalizedTournaments");
+  const matchEl = q("#metricFinalizedMatches");
+  if (playersEl) playersEl.textContent = formatNum(players);
+  if (openEl) openEl.textContent = formatNum(openTournaments);
+  if (finalizedEl) finalizedEl.textContent = formatNum(finalizedTournaments);
+  if (matchEl) matchEl.textContent = formatNum(finalizedMatches);
 }
 function fillSelectOptions(selectEl, items, selectedValue = null) {
   selectEl.innerHTML = items.map((item) => `<option value="${item.id}">${item.name}</option>`).join("");
@@ -739,11 +869,42 @@ function renderTournament() {
     )).join("")}</div>`
     : '<p class="muted">아직 기록된 경기가 없습니다.</p>';
 
+  const prevA1 = q("#matchA1").value;
+  const prevA2 = q("#matchA2").value;
+  const prevB1 = q("#matchB1").value;
+  const prevB2 = q("#matchB2").value;
   const participantOptions = open.participants.map((p) => ({ id: p.playerId, name: p.name }));
   fillSelectOptions(q("#matchA1"), participantOptions);
   fillSelectOptions(q("#matchA2"), participantOptions);
   fillSelectOptions(q("#matchB1"), participantOptions);
   fillSelectOptions(q("#matchB2"), participantOptions);
+
+  setSelectValueIfPossible(q("#matchA1"), prevA1);
+  setSelectValueIfPossible(q("#matchA2"), prevA2);
+  setSelectValueIfPossible(q("#matchB1"), prevB1);
+  setSelectValueIfPossible(q("#matchB2"), prevB2);
+
+  const formatSelect = q("#matchFormat");
+  const doublesOption = formatSelect.querySelector("option[value='DOUBLES']");
+  const doublesAvailable = open.participants.length >= 4;
+  if (doublesOption) doublesOption.disabled = !doublesAvailable;
+  if (!doublesAvailable && formatSelect.value === "DOUBLES") {
+    formatSelect.value = "SINGLES";
+  }
+
+  const currentPayload = {
+    matchFormat: formatSelect.value,
+    teamAPlayer1Id: Number(q("#matchA1").value),
+    teamAPlayer2Id: formatSelect.value === "DOUBLES" ? Number(q("#matchA2").value) : null,
+    teamBPlayer1Id: Number(q("#matchB1").value),
+    teamBPlayer2Id: formatSelect.value === "DOUBLES" ? Number(q("#matchB2").value) : null,
+    scoreA: 1,
+    scoreB: 0,
+  };
+  if (validateMatchPayload(currentPayload)) {
+    applyMatchSelectDefaults(open.participants);
+  }
+
   q("#matchForm").querySelectorAll("input,select,button").forEach((el) => { el.disabled = false; });
   q("#finalizeTournamentBtn").disabled = false;
   q("#cancelTournamentBtn").disabled = false;
@@ -847,7 +1008,9 @@ function renderStats() {
   }
 
   const topRows = data.topPlayers.map((p) => `<tr><td class="num-col">${p.rank}</td><td>${p.name}</td><td class="num-col">${formatNum(p.currentElo)}</td></tr>`).join("");
-  const tourRows = data.recentTournaments.map((t) => `<tr><td>${t.tournamentDate}</td><td>${t.name}</td><td>${t.status}</td><td>${t.matchCount}</td></tr>`).join("");
+  const tourRows = data.recentTournaments
+    .map((t) => `<tr><td>${t.tournamentDate}</td><td>${t.name}</td><td>${tournamentStatusLabel(t.status)}</td><td>${t.matchCount}</td></tr>`)
+    .join("");
 
   const histEntries = Object.entries(data.eloHistogram || {});
   const histMax = Math.max(...histEntries.map(([, v]) => Number(v || 0)), 1);
@@ -971,6 +1134,7 @@ function renderDashboard() {
 
 function renderAll() {
   renderTournamentTypeSelectOptions();
+  renderQuickMetrics();
   renderDashboard();
   renderTournament();
   renderRecord();
@@ -981,6 +1145,7 @@ function renderAll() {
 
 async function init() {
   bindTabEvents();
+  bindGlobalActions();
   bindPlayerForm();
   bindSimForm();
   bindTournamentParticipantPicker();
