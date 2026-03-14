@@ -1,5 +1,5 @@
 import { createApp } from "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.prod.js";
-import Chart from "https://cdn.jsdelivr.net/npm/chart.js@4.5.0/+esm";
+import Chart from "https://cdn.jsdelivr.net/npm/chart.js@4.5.0/auto/+esm";
 
 const TABS = [
   { id: "dashboard", label: "대시보드", desc: "랭킹 · 최근 경기" },
@@ -282,10 +282,7 @@ const MatchCard = {
       <header class="match-card-head">
         <div class="match-head-top">
           <div class="match-head-left">
-            <span class="match-order">
-              <span v-if="match.matchOrder != null">#{{ match.matchOrder }}</span>
-              <small class="order-type">{{ tournamentTypeText }}</small>
-            </span>
+            <span class="match-order">{{ tournamentTypeText }}</span>
             <button
               v-if="isTournamentLinkable"
               type="button"
@@ -298,12 +295,6 @@ const MatchCard = {
             <span class="match-date">{{ match.tournamentDate || "-" }}</span>
             <button v-if="deletable" type="button" class="btn danger mini" @click="$emit('delete')">Delete</button>
           </div>
-        </div>
-
-        <div v-if="showMeta" class="match-meta-line">
-          <span class="meta-pill">{{ matchFormatLabel(match.matchFormat) }}</span>
-          <span class="meta-dot">&middot;</span>
-          <span>Score Result</span>
         </div>
       </header>
 
@@ -440,6 +431,7 @@ const app = createApp({
 
       charts: {
         playerStats: null,
+        playerElo: null,
       },
 
       simResult: null,
@@ -907,6 +899,18 @@ const app = createApp({
       }
     },
 
+    destroyPlayerEloChart() {
+      if (this.charts.playerElo) {
+        this.charts.playerElo.destroy();
+        this.charts.playerElo = null;
+      }
+    },
+
+    destroyPlayerCharts() {
+      this.destroyPlayerStatsChart();
+      this.destroyPlayerEloChart();
+    },
+
     renderPlayerStatsChart() {
       const canvas = this.$refs.playerStatsChart;
       if (!canvas || !this.playerStats?.summary) {
@@ -985,8 +989,94 @@ const app = createApp({
       });
     },
 
-    schedulePlayerStatsChartRender() {
-      this.$nextTick(() => this.renderPlayerStatsChart());
+    renderPlayerEloChart() {
+      const canvas = this.$refs.playerEloChart;
+      const events = Array.isArray(this.playerStats?.events) ? this.playerStats.events : [];
+      if (!canvas || !events.length) {
+        this.destroyPlayerEloChart();
+        return;
+      }
+
+      const labels = events.map((event, index) => {
+        const date = String(event?.eventDate || "-");
+        const type = String(event?.eventType || "EVENT").toUpperCase();
+        const token = type === "REGISTER" ? "R" : type === "TOURNAMENT" ? "T" : type === "ADJUSTMENT" ? "A" : "E";
+        return `${date} - ${token}${index + 1}`;
+      });
+      const eloAfter = events.map((event) => toInt(event?.eloAfter));
+      const deltas = events.map((event) => toInt(event?.delta));
+      const deltaColors = deltas.map((delta) =>
+        delta > 0 ? "rgba(18, 181, 141, 0.58)" : delta < 0 ? "rgba(214, 67, 97, 0.56)" : "rgba(122, 138, 158, 0.44)"
+      );
+      const maxAbsDelta = Math.max(10, ...deltas.map((delta) => Math.abs(delta)));
+
+      this.destroyPlayerEloChart();
+      this.charts.playerElo = new Chart(canvas, {
+        data: {
+          labels,
+          datasets: [
+            {
+              type: "line",
+              label: "ELO",
+              data: eloAfter,
+              yAxisID: "y",
+              borderColor: "#1f6fff",
+              backgroundColor: "rgba(31, 111, 255, 0.16)",
+              pointRadius: 3.5,
+              pointHoverRadius: 5,
+              pointBackgroundColor: "#1f6fff",
+              tension: 0.28,
+              fill: true,
+            },
+            {
+              type: "bar",
+              label: "Delta",
+              data: deltas,
+              yAxisID: "y1",
+              borderRadius: 6,
+              backgroundColor: deltaColors,
+              borderColor: deltaColors,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { position: "top" },
+            tooltip: { padding: 10 },
+          },
+          scales: {
+            y: {
+              title: { display: true, text: "ELO" },
+              grid: { color: "rgba(64, 92, 130, 0.14)" },
+            },
+            y1: {
+              title: { display: true, text: "Delta" },
+              position: "right",
+              min: -maxAbsDelta,
+              max: maxAbsDelta,
+              grid: { drawOnChartArea: false },
+            },
+            x: {
+              ticks: { maxRotation: 35, minRotation: 35 },
+              grid: { color: "rgba(64, 92, 130, 0.08)" },
+            },
+          },
+        },
+      });
+    },
+
+    schedulePlayerChartsRender() {
+      if (this.activeTab !== "player") return;
+      this.$nextTick(() => {
+        const scheduleFrame = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb) => setTimeout(cb, 0);
+        scheduleFrame(() => {
+          this.renderPlayerStatsChart();
+          this.renderPlayerEloChart();
+        });
+      });
     },
 
     async submitTournamentSettings() {
@@ -1398,7 +1488,7 @@ const app = createApp({
                 }))
               : [],
           };
-          this.schedulePlayerStatsChartRender();
+          this.schedulePlayerChartsRender();
         });
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "선수 기록 조회 실패", true);
@@ -1554,15 +1644,17 @@ const app = createApp({
       handler() {
         if (!this.playerStats) {
           this.modals.playerMatches = false;
+          this.destroyPlayerCharts();
+          return;
         }
-        this.schedulePlayerStatsChartRender();
+        this.schedulePlayerChartsRender();
       },
       deep: false,
     },
 
     activeTab(newValue) {
       if (newValue === "player") {
-        this.schedulePlayerStatsChartRender();
+        this.schedulePlayerChartsRender();
       }
     },
 
@@ -1583,7 +1675,7 @@ const app = createApp({
 
   beforeUnmount() {
     window.removeEventListener("resize", this.syncSidebarMode);
-    this.destroyPlayerStatsChart();
+    this.destroyPlayerCharts();
     if (this.toast.timer) {
       clearTimeout(this.toast.timer);
       this.toast.timer = null;
@@ -2021,6 +2113,14 @@ const app = createApp({
                   <canvas ref="playerStatsChart"></canvas>
                 </div>
                 <p class="muted">집계 기준: 취소 대회를 제외한 전체 경기(진행 중 대회 포함)</p>
+              </article>
+
+              <article v-if="playerStats" class="surface">
+                <h3>ELO 변동 추이</h3>
+                <div class="chart-wrap elo-trend">
+                  <canvas ref="playerEloChart"></canvas>
+                </div>
+                <p class="muted">라인은 이벤트별 ELO, 막대는 이벤트별 증감량입니다.</p>
               </article>
 
               <article v-if="playerStats" class="surface">
