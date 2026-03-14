@@ -1,6 +1,0 @@
-name = "elo-pages"
-compatibility_date = "2026-03-11"
-compatibility_flags = ["nodejs_compat"]
-pages_build_output_dir = "."
-# D1 binding is configured in Cloudflare Pages dashboard.
-# Binding name must be `DB`.
