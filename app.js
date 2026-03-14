@@ -366,6 +366,9 @@ const app = createApp({
         playerQuery: "",
         adminQuery: "",
         adminStatus: "ALL",
+        isMobile: typeof window !== "undefined" ? window.matchMedia("(max-width: 1024px)").matches : false,
+        desktopSidebarOpen: true,
+        mobileSidebarOpen: false,
       },
 
       forms: {
@@ -408,6 +411,10 @@ const app = createApp({
   },  computed: {
     isLoading() {
       return this.loading.count > 0;
+    },
+
+    isSidebarOpen() {
+      return this.ui.isMobile ? this.ui.mobileSidebarOpen : this.ui.desktopSidebarOpen;
     },
 
     activeRules() {
@@ -570,6 +577,40 @@ const app = createApp({
       if (status === "FINALIZED") return "active";
       if (status === "CANCELED") return "inactive";
       return "";
+    },
+
+    syncSidebarMode() {
+      const mobile = window.matchMedia("(max-width: 1024px)").matches;
+      if (this.ui.isMobile === mobile) return;
+      this.ui.isMobile = mobile;
+      if (mobile) {
+        this.ui.mobileSidebarOpen = false;
+      } else {
+        this.ui.mobileSidebarOpen = false;
+      }
+    },
+
+    toggleSidebar() {
+      if (this.ui.isMobile) {
+        this.ui.mobileSidebarOpen = !this.ui.mobileSidebarOpen;
+      } else {
+        this.ui.desktopSidebarOpen = !this.ui.desktopSidebarOpen;
+      }
+    },
+
+    closeSidebar() {
+      if (this.ui.isMobile) {
+        this.ui.mobileSidebarOpen = false;
+      } else {
+        this.ui.desktopSidebarOpen = false;
+      }
+    },
+
+    setActiveTab(tabId) {
+      this.activeTab = tabId;
+      if (this.ui.isMobile) {
+        this.ui.mobileSidebarOpen = false;
+      }
     },
 
     findPlayerByName(name) {
@@ -1426,10 +1467,13 @@ const app = createApp({
   },
 
   async mounted() {
+    this.syncSidebarMode();
+    window.addEventListener("resize", this.syncSidebarMode);
     await this.refreshAll("초기 데이터를 불러오는 중...");
   },
 
   beforeUnmount() {
+    window.removeEventListener("resize", this.syncSidebarMode);
     this.destroyPlayerStatsChart();
     if (this.toast.timer) {
       clearTimeout(this.toast.timer);
@@ -1442,8 +1486,20 @@ const app = createApp({
       <div class="bg-orb orb-b"></div>
       <div class="bg-orb orb-c"></div>
 
-      <div class="layout-shell">
-        <aside class="side-nav">
+      <button
+        v-if="ui.isMobile && isSidebarOpen"
+        type="button"
+        class="mobile-backdrop"
+        aria-label="사이드바 닫기"
+        @click="closeSidebar"
+      ></button>
+
+      <div class="layout-shell" :class="{ 'sidebar-collapsed': !isSidebarOpen && !ui.isMobile }">
+        <aside class="side-nav" :class="{ open: isSidebarOpen }">
+          <div class="side-nav-top">
+            <button type="button" class="side-close-btn" @click="closeSidebar">{{ ui.isMobile ? "닫기" : "접기" }}</button>
+          </div>
+
           <div class="brand-panel">
             <p class="brand-overline">ELO RANKING SYSTEM</p>
             <h1>ELO Ops Studio</h1>
@@ -1453,16 +1509,16 @@ const app = createApp({
           <nav class="tab-nav" aria-label="주요 메뉴">
             <button
               v-for="item in tabs"
-              :key="item.id"
-              type="button"
-              class="tab-btn"
-              :class="{ active: activeTab === item.id }"
-              @click="activeTab = item.id"
-            >
-              <span class="tab-label">{{ item.label }}</span>
-              <small>{{ item.desc }}</small>
-            </button>
-          </nav>
+                :key="item.id"
+                type="button"
+                class="tab-btn"
+                :class="{ active: activeTab === item.id }"
+                @click="setActiveTab(item.id)"
+              >
+                <span class="tab-label">{{ item.label }}</span>
+                <small>{{ item.desc }}</small>
+              </button>
+            </nav>
 
           <div class="side-foot">
             <p>저장소: Cloudflare D1</p>
@@ -1477,6 +1533,9 @@ const app = createApp({
               <p>선수 등록부터 대회 종료 반영까지 한 흐름으로 관리합니다.</p>
             </div>
             <div class="head-actions">
+              <button type="button" class="btn ghost mini nav-toggle-btn" @click="toggleSidebar">
+                {{ isSidebarOpen ? "메뉴 숨기기" : "메뉴 보기" }}
+              </button>
               <button type="button" class="btn ghost" @click="refreshAll('전체 데이터를 동기화하는 중...')">전체 동기화</button>
               <div class="sync-text">마지막 동기화: {{ formatDateTime(lastSyncedAt, true) }}</div>
               <div class="health-pill" :class="{ ok: health.ok === true, bad: health.ok === false }">{{ health.text }}</div>
