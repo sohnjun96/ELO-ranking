@@ -167,8 +167,56 @@ async function listPlayers(db) {
         FROM players p2
         WHERE p2.is_active=1
           AND (p2.current_elo > p.current_elo OR (p2.current_elo = p.current_elo AND p2.name < p.name))
-      ) AS rank
+      ) AS rank,
+      COALESCE(stats.matchCount, 0) AS matchCount,
+      COALESCE(stats.wins, 0) AS wins,
+      COALESCE(stats.losses, 0) AS losses,
+      COALESCE(stats.draws, 0) AS draws,
+      COALESCE(ROUND(stats.wins * 100.0 / NULLIF(stats.matchCount, 0), 0), 0) AS winRate
     FROM players p
+    LEFT JOIN (
+      SELECT
+        mp.player_id AS playerId,
+        COUNT(*) AS matchCount,
+        SUM(CASE WHEN mp.result = 'WIN' THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN mp.result = 'LOSE' THEN 1 ELSE 0 END) AS losses,
+        SUM(CASE WHEN mp.result = 'DRAW' THEN 1 ELSE 0 END) AS draws
+      FROM (
+        SELECT
+          m.team_a_player1_id AS player_id,
+          m.tournament_id AS tournament_id,
+          CASE WHEN m.score_a > m.score_b THEN 'WIN' WHEN m.score_a < m.score_b THEN 'LOSE' ELSE 'DRAW' END AS result
+        FROM matches m
+        WHERE m.status='ACTIVE'
+
+        UNION ALL
+        SELECT
+          m.team_a_player2_id AS player_id,
+          m.tournament_id AS tournament_id,
+          CASE WHEN m.score_a > m.score_b THEN 'WIN' WHEN m.score_a < m.score_b THEN 'LOSE' ELSE 'DRAW' END AS result
+        FROM matches m
+        WHERE m.status='ACTIVE' AND m.team_a_player2_id IS NOT NULL
+
+        UNION ALL
+        SELECT
+          m.team_b_player1_id AS player_id,
+          m.tournament_id AS tournament_id,
+          CASE WHEN m.score_b > m.score_a THEN 'WIN' WHEN m.score_b < m.score_a THEN 'LOSE' ELSE 'DRAW' END AS result
+        FROM matches m
+        WHERE m.status='ACTIVE'
+
+        UNION ALL
+        SELECT
+          m.team_b_player2_id AS player_id,
+          m.tournament_id AS tournament_id,
+          CASE WHEN m.score_b > m.score_a THEN 'WIN' WHEN m.score_b < m.score_a THEN 'LOSE' ELSE 'DRAW' END AS result
+        FROM matches m
+        WHERE m.status='ACTIVE' AND m.team_b_player2_id IS NOT NULL
+      ) mp
+      JOIN tournaments t ON t.id = mp.tournament_id
+      WHERE t.status != 'CANCELED'
+      GROUP BY mp.player_id
+    ) stats ON stats.playerId = p.id
     WHERE p.is_active=1
     ORDER BY p.current_elo DESC, p.name ASC`
   );
@@ -403,11 +451,13 @@ async function getTournamentMatches(db, tournamentId) {
     `SELECT
       m.id, m.tournament_id AS tournamentId, m.match_order AS matchOrder, m.match_format AS matchFormat,
       m.score_a AS scoreA, m.score_b AS scoreB, m.delta_team_a AS deltaTeamA, m.delta_team_b AS deltaTeamB,
+      t.name AS tournamentName, t.tournament_date AS tournamentDate, t.tournament_type AS tournamentType,
       pa1.id AS teamAPlayer1Id, pa1.name AS teamAPlayer1Name,
       pa2.id AS teamAPlayer2Id, pa2.name AS teamAPlayer2Name,
       pb1.id AS teamBPlayer1Id, pb1.name AS teamBPlayer1Name,
       pb2.id AS teamBPlayer2Id, pb2.name AS teamBPlayer2Name
     FROM matches m
+    JOIN tournaments t ON t.id = m.tournament_id
     JOIN players pa1 ON pa1.id = m.team_a_player1_id
     LEFT JOIN players pa2 ON pa2.id = m.team_a_player2_id
     JOIN players pb1 ON pb1.id = m.team_b_player1_id
@@ -420,6 +470,9 @@ async function getTournamentMatches(db, tournamentId) {
   return rows.map((row) => ({
     id: Number(row.id),
     tournamentId: Number(row.tournamentId),
+    tournamentName: row.tournamentName,
+    tournamentDate: row.tournamentDate,
+    tournamentType: row.tournamentType,
     matchOrder: Number(row.matchOrder),
     matchFormat: row.matchFormat,
     scoreA: Number(row.scoreA),
@@ -859,7 +912,7 @@ async function playerStats(db, playerId) {
     `SELECT
       m.id, m.match_format AS matchFormat, m.match_order AS matchOrder,
       m.score_a AS scoreA, m.score_b AS scoreB, m.delta_team_a AS deltaTeamA, m.delta_team_b AS deltaTeamB,
-      t.id AS tournamentId, t.name AS tournamentName, t.tournament_date AS tournamentDate,
+      t.id AS tournamentId, t.name AS tournamentName, t.tournament_date AS tournamentDate, t.tournament_type AS tournamentType,
       pa1.id AS teamAPlayer1Id, pa1.name AS teamAPlayer1Name,
       pa2.id AS teamAPlayer2Id, pa2.name AS teamAPlayer2Name,
       pb1.id AS teamBPlayer1Id, pb1.name AS teamBPlayer1Name,
@@ -923,6 +976,7 @@ async function playerStats(db, playerId) {
       tournamentId: Number(row.tournamentId),
       tournamentName: row.tournamentName,
       tournamentDate: row.tournamentDate,
+      tournamentType: row.tournamentType,
       matchOrder: Number(row.matchOrder),
       matchFormat: row.matchFormat,
       myTeamName: inTeamA ? teamName(row.teamAPlayer1Name, row.teamAPlayer2Name, row.matchFormat) : teamName(row.teamBPlayer1Name, row.teamBPlayer2Name, row.matchFormat),
@@ -974,6 +1028,13 @@ async function statsOverview(db) {
     db,
     `SELECT
       (SELECT COUNT(*) FROM players WHERE is_active=1) AS players,
+      (SELECT COUNT(*) FROM tournaments) AS totalTournaments,
+      (
+        SELECT COUNT(*)
+        FROM matches m
+        JOIN tournaments t ON t.id = m.tournament_id
+        WHERE m.status='ACTIVE' AND t.status != 'CANCELED'
+      ) AS totalMatches,
       (SELECT COUNT(*) FROM tournaments WHERE status='FINALIZED') AS finalizedTournaments,
       (SELECT COUNT(*) FROM tournaments WHERE status='OPEN') AS openTournaments,
       (
@@ -1011,6 +1072,8 @@ async function statsOverview(db) {
   return {
     summary: {
       players: Number(summary?.players || 0),
+      totalTournaments: Number(summary?.totalTournaments || 0),
+      totalMatches: Number(summary?.totalMatches || 0),
       finalizedTournaments: Number(summary?.finalizedTournaments || 0),
       openTournaments: Number(summary?.openTournaments || 0),
       finalizedMatches: Number(summary?.finalizedMatches || 0),
@@ -1134,7 +1197,20 @@ async function route(request, env) {
     if (segments.length === 1) {
       if (request.method === "GET") {
         const players = await listPlayers(env.DB);
-        return json({ ok: true, players: players.map((p) => ({ id: Number(p.id), name: p.name, currentElo: Number(p.currentElo), rank: Number(p.rank) })) });
+        return json({
+          ok: true,
+          players: players.map((p) => ({
+            id: Number(p.id),
+            name: p.name,
+            currentElo: Number(p.currentElo),
+            rank: Number(p.rank),
+            matchCount: Number(p.matchCount || 0),
+            wins: Number(p.wins || 0),
+            losses: Number(p.losses || 0),
+            draws: Number(p.draws || 0),
+            winRate: Number(p.winRate || 0),
+          })),
+        });
       }
 
       if (request.method === "POST") {
