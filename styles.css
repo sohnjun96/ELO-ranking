@@ -364,6 +364,30 @@ button {
   font-size: 12px;
 }
 
+.dashboard-kpi-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: min(680px, 100%);
+  margin: 2px auto 0;
+}
+
+.dashboard-kpi-grid .kpi-card {
+  padding: 10px 12px;
+  gap: 4px;
+}
+
+.dashboard-kpi-grid .kpi-card span {
+  font-size: 12px;
+}
+
+.dashboard-kpi-grid .kpi-card strong {
+  font-size: 22px;
+}
+
+.dashboard-kpi-grid .kpi-card small {
+  font-size: 11px;
+}
+
 .panel-stack,
 .panel-group {
   display: grid;
@@ -1428,6 +1452,11 @@ select:focus {
 
   .kpi-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
   }
 
   .summary-stat-grid,

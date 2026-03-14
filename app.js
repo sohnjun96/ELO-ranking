@@ -456,6 +456,10 @@ const app = createApp({
       });
     },
 
+    dashboardRecentMatches() {
+      return this.filteredRecentMatches.slice(0, 5);
+    },
+
     participantPool() {
       return [...this.players].sort((a, b) => b.currentElo - a.currentElo || a.name.localeCompare(b.name, "ko"));
     },
@@ -1605,14 +1609,6 @@ const app = createApp({
             </div>
           </header>
 
-          <section class="kpi-grid" aria-label="핵심 지표">
-            <article v-for="metric in quickMetrics" :key="metric.label" class="kpi-card">
-              <span>{{ metric.label }}</span>
-              <strong>{{ metric.value }}</strong>
-              <small>{{ metric.help }}</small>
-            </article>
-          </section>
-
           <main class="panel-stack">
             <section v-show="activeTab === 'dashboard'" class="panel-group">
               <article class="surface accent">
@@ -1674,7 +1670,7 @@ const app = createApp({
 
                   <div class="card-list">
                     <match-card
-                      v-for="match in filteredRecentMatches"
+                      v-for="match in dashboardRecentMatches"
                       :key="'recent-' + match.matchId"
                       :match="match"
                       :type-label="tournamentTypeLabel(match.tournamentType)"
@@ -1683,10 +1679,18 @@ const app = createApp({
                       @open-tournament="jumpToTournamentById"
                       @open-player="jumpToPlayerByName"
                     />
-                    <p v-if="!filteredRecentMatches.length" class="empty-copy">최근 경기 데이터가 없습니다.</p>
+                    <p v-if="!dashboardRecentMatches.length" class="empty-copy">최근 경기 데이터가 없습니다.</p>
                   </div>
                 </article>
               </div>
+
+              <section class="kpi-grid dashboard-kpi-grid" aria-label="Dashboard metrics">
+                <article v-for="metric in quickMetrics" :key="'dashboard-metric-' + metric.label" class="kpi-card">
+                  <span>{{ metric.label }}</span>
+                  <strong>{{ metric.value }}</strong>
+                  <small>{{ metric.help }}</small>
+                </article>
+              </section>
             </section>
 
             <section v-show="activeTab === 'tournament'" class="panel-group">
