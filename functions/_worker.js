@@ -870,7 +870,7 @@ async function playerStats(db, playerId) {
     LEFT JOIN players pa2 ON pa2.id = m.team_a_player2_id
     JOIN players pb1 ON pb1.id = m.team_b_player1_id
     LEFT JOIN players pb2 ON pb2.id = m.team_b_player2_id
-    WHERE m.status='ACTIVE' AND t.status='FINALIZED'
+    WHERE m.status='ACTIVE' AND t.status != 'CANCELED'
       AND (m.team_a_player1_id=? OR m.team_a_player2_id=? OR m.team_b_player1_id=? OR m.team_b_player2_id=?)
     ORDER BY t.tournament_date DESC, m.match_order DESC, m.id DESC`,
     playerId,

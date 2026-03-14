@@ -882,11 +882,19 @@ const app = createApp({
 
       const summary = this.playerStats.summary;
       const labels = ["전체", "단식", "복식"];
-      const matchCounts = [toInt(summary.total), toInt(summary.singlesTotal), toInt(summary.doublesTotal)];
-      const winRates = [toInt(summary.winRate), toInt(summary.singlesWinRate), toInt(summary.doublesWinRate)];
+      const total = toInt(summary.total);
+      const singlesTotal = toInt(summary.singlesTotal);
+      const doublesTotal = toInt(summary.doublesTotal);
+      const matchCounts = [total, singlesTotal, doublesTotal];
+      const winRates = [
+        total > 0 ? toInt(summary.winRate) : null,
+        singlesTotal > 0 ? toInt(summary.singlesWinRate) : null,
+        doublesTotal > 0 ? toInt(summary.doublesWinRate) : null,
+      ];
 
       this.destroyPlayerStatsChart();
       this.charts.playerStats = new Chart(canvas, {
+        type: "bar",
         data: {
           labels,
           datasets: [
@@ -1964,7 +1972,7 @@ const app = createApp({
                 <div class="summary-stat-grid player-summary">
                   <div><strong>{{ formatNum(playerStats.player.currentElo) }}</strong><small>ELO</small></div>
                   <div><strong>#{{ playerStats.player.rank }}</strong><small>현재 순위</small></div>
-                  <div><strong>{{ playerStats.summary.wins }}승 {{ playerStats.summary.losses }}패</strong><small>전체 전적</small></div>
+                  <div><strong>{{ playerStats.summary.wins }}승 {{ playerStats.summary.losses }}패 {{ playerStats.summary.draws }}무</strong><small>전체 전적</small></div>
                   <div><strong>{{ playerStats.summary.winRate }}%</strong><small>전체 승률</small></div>
                   <div><strong>{{ playerStats.summary.singlesWinRate }}%</strong><small>단식 승률</small></div>
                   <div><strong>{{ playerStats.summary.doublesWinRate }}%</strong><small>복식 승률</small></div>
@@ -1976,6 +1984,7 @@ const app = createApp({
                 <div class="chart-wrap">
                   <canvas ref="playerStatsChart"></canvas>
                 </div>
+                <p class="muted">집계 기준: 취소 대회를 제외한 전체 경기(진행 중 대회 포함)</p>
               </article>
 
               <article v-if="playerStats" class="surface">
