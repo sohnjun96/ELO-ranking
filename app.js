@@ -1,31 +1,13 @@
-﻿const state = {
-  players: [],
-  recentMatches: [],
-  openTournament: null,
-  tournaments: [],
-  selectedRecordTournamentId: null,
-  recordTournament: null,
-  selectedPlayerId: null,
-  playerStats: null,
-  overview: null,
-  simResult: null,
-  tournamentRules: [],
-  adminPlayers: [],
-  adminSelectedPlayerId: null,
-  participantPicker: {
-    selectedIds: [],
-    query: "",
-  },
-  loading: {
-    count: 0,
-    message: "데이터를 동기화하는 중...",
-  },
-  rankingQuery: "",
-  recentMatchFormatFilter: "ALL",
-  adminPlayerQuery: "",
-  adminPlayerStatusFilter: "ALL",
-  lastSyncedAt: null,
-};
+import { createApp } from "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.prod.js";
+
+const TABS = [
+  { id: "dashboard", label: "대시보드", desc: "랭킹 · 최근 경기" },
+  { id: "tournament", label: "대회 진행", desc: "참가자 · 경기 기록" },
+  { id: "records", label: "대회 기록", desc: "종료 대회 리포트" },
+  { id: "player", label: "선수별 기록", desc: "전적 · ELO 이력" },
+  { id: "stats", label: "통계", desc: "전체 분포 · 요약" },
+  { id: "admin", label: "관리", desc: "선수 · 규칙 조정" },
+];
 
 const DEFAULT_RULES = [
   { tournamentType: "REGULAR", displayName: "정규 대회", kFactor: 200, basePoints: 4 },
@@ -33,38 +15,9 @@ const DEFAULT_RULES = [
   { tournamentType: "FRIENDLY", displayName: "친선전", kFactor: 0, basePoints: 0 },
 ];
 
-const q = (selector) => document.querySelector(selector);
-
-function getTournamentRules() {
-  return state.tournamentRules.length ? state.tournamentRules : DEFAULT_RULES;
-}
-
-function tournamentRuleByType(type) {
-  const map = new Map(getTournamentRules().map((rule) => [rule.tournamentType, rule]));
-  return map.get(type) || DEFAULT_RULES.find((rule) => rule.tournamentType === type) || DEFAULT_RULES[0];
-}
-
-function tournamentTypeLabel(type) {
-  return tournamentRuleByType(type)?.displayName || String(type || "");
-}
-
-function renderTournamentTypeSelectOptions() {
-  const rules = getTournamentRules();
-  const simSelect = q("#simType");
-  const tournamentSelect = q("#tournamentType");
-  if (!simSelect || !tournamentSelect) return;
-
-  const currentSim = simSelect.value || "REGULAR";
-  const currentTournament = tournamentSelect.value || "REGULAR";
-  const optionsHtml = rules.map((rule) => `<option value="${rule.tournamentType}">${rule.displayName}</option>`).join("");
-
-  simSelect.innerHTML = optionsHtml;
-  tournamentSelect.innerHTML = optionsHtml;
-
-  const hasSim = rules.some((rule) => rule.tournamentType === currentSim);
-  const hasTournament = rules.some((rule) => rule.tournamentType === currentTournament);
-  simSelect.value = hasSim ? currentSim : "REGULAR";
-  tournamentSelect.value = hasTournament ? currentTournament : "REGULAR";
+function toInt(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
 }
 
 function formatNum(value) {
@@ -72,8 +25,26 @@ function formatNum(value) {
 }
 
 function formatSigned(value) {
-  const num = Number(value || 0);
-  return `${num >= 0 ? "+" : ""}${num}`;
+  const n = Number(value || 0);
+  return `${n >= 0 ? "+" : ""}${n}`;
+}
+
+function formatDateTime(value, includeYear = false) {
+  if (!value) return "-";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("ko-KR", {
+    year: includeYear ? "numeric" : undefined,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function normalizeSearch(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, "").trim();
 }
 
 function matchFormatLabel(format) {
@@ -87,97 +58,11 @@ function tournamentStatusLabel(status) {
   return String(status || "-");
 }
 
-function formatDateTime(value) {
-  if (!value) return "-";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("ko-KR", {
-    hour12: false,
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function expectedScore(a, b) {
+  return 1 / (1 + 10 ** ((b - a) / 400));
 }
 
-function tableWrap(innerHtml) {
-  return `<div class="table-wrap">${innerHtml}</div>`;
-}
-
-function renderMatchResultCard(match, options = {}) {
-  const withMeta = options.withMeta !== false;
-  const showDelete = Boolean(options.showDelete);
-  const deleteId = options.deleteId;
-  const metaText = withMeta
-    ? [match.tournamentDate, match.tournamentName, tournamentTypeLabel(match.tournamentType)].filter(Boolean).join(" · ")
-    : "";
-
-  return `
-    <article class="match-result-card">
-      <header class="match-result-head">
-        <div class="match-head-main">
-          ${match.matchOrder != null ? `<span class="match-order">#${match.matchOrder}</span>` : ""}
-          <span class="match-format">${matchFormatLabel(match.matchFormat)}</span>
-        </div>
-        ${showDelete ? `<button type="button" data-delete-id="${deleteId}" class="danger match-delete-btn">삭제</button>` : ""}
-      </header>
-      ${metaText ? `<div class="match-meta">${metaText}</div>` : ""}
-      <div class="match-score-body">
-        <div class="match-team-line">
-          <span class="match-team-name">${match.teamAName}</span>
-          <span class="match-team-score">${match.scoreA}</span>
-        </div>
-        <div class="match-vs">VS</div>
-        <div class="match-team-line">
-          <span class="match-team-name">${match.teamBName}</span>
-          <span class="match-team-score">${match.scoreB}</span>
-        </div>
-      </div>
-      <footer class="match-delta-row">
-        <span class="delta-pill ${Number(match.deltaTeamA) >= 0 ? "up" : "down"}">A ${formatSigned(match.deltaTeamA)}</span>
-        <span class="delta-pill ${Number(match.deltaTeamB) >= 0 ? "up" : "down"}">B ${formatSigned(match.deltaTeamB)}</span>
-      </footer>
-    </article>
-  `;
-}
-
-function showToast(message, isError = false) {
-  const el = q("#toast");
-  el.textContent = message;
-  el.style.background = isError ? "#8c2f2f" : "#1f333f";
-  el.classList.add("show");
-  setTimeout(() => el.classList.remove("show"), 2200);
-}
-
-function setLoading(isOn, message = "데이터를 동기화하는 중...") {
-  const overlay = q("#appLoading");
-  if (!overlay) return;
-
-  if (isOn) {
-    state.loading.count += 1;
-    state.loading.message = message;
-  } else {
-    state.loading.count = Math.max(0, state.loading.count - 1);
-  }
-
-  const active = state.loading.count > 0;
-  overlay.classList.toggle("show", active);
-  overlay.setAttribute("aria-hidden", active ? "false" : "true");
-
-  const messageEl = overlay.querySelector("strong");
-  if (messageEl) messageEl.textContent = state.loading.message;
-}
-
-async function withLoading(work, message) {
-  setLoading(true, message);
-  try {
-    return await work();
-  } finally {
-    setLoading(false);
-  }
-}
-
-async function api(path, method = "GET", body) {
+async function requestApi(path, method = "GET", body) {
   const res = await fetch(path, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
@@ -193,1183 +78,1746 @@ async function api(path, method = "GET", body) {
   if (!data || data.ok !== true) {
     throw new Error(data?.error || `HTTP ${res.status}`);
   }
-
   return data;
 }
 
-function setTab(tab) {
-  document.querySelectorAll(".tab").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
-  document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === tab));
-}
-
-function bindTabEvents() {
-  q("#tabs").addEventListener("click", (e) => {
-    const btn = e.target.closest(".tab");
-    if (!btn) return;
-    setTab(btn.dataset.tab);
-  });
-}
-
-function bindGlobalActions() {
-  const refreshButton = q("#refreshAllBtn");
-  if (!refreshButton) return;
-
-  refreshButton.addEventListener("click", async () => {
-    try {
-      await checkHealth();
-      await refreshAll({ loadingMessage: "전체 데이터를 갱신하는 중..." });
-      showToast("전체 동기화 완료");
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-}
-
-function bindDashboardFilters() {
-  const rankingInput = q("#rankingSearchInput");
-  if (rankingInput) {
-    rankingInput.addEventListener("input", (e) => {
-      state.rankingQuery = String(e.target.value || "");
-      renderRanking();
-    });
-  }
-
-  const recentFilter = q("#recentMatchFormatFilter");
-  if (recentFilter) {
-    recentFilter.addEventListener("change", (e) => {
-      state.recentMatchFormatFilter = String(e.target.value || "ALL");
-      renderRecentMatches();
-    });
-  }
-}
-
-function bindParticipantPickerActions() {
-  const selectAllButton = q("#participantSelectAllBtn");
-  const selectTop8Button = q("#participantSelectTop8Btn");
-  const clearButton = q("#participantClearBtn");
-  if (!selectAllButton || !selectTop8Button || !clearButton) return;
-
-  selectAllButton.addEventListener("click", () => {
-    state.participantPicker.selectedIds = sortedPlayersByElo().map((player) => Number(player.id));
-    renderTournamentParticipantPicker();
-  });
-
-  selectTop8Button.addEventListener("click", () => {
-    state.participantPicker.selectedIds = sortedPlayersByElo().slice(0, 8).map((player) => Number(player.id));
-    renderTournamentParticipantPicker();
-  });
-
-  clearButton.addEventListener("click", () => {
-    state.participantPicker.selectedIds = [];
-    renderTournamentParticipantPicker();
-  });
-}
-
-function bindAdminFilters() {
-  const queryInput = q("#adminPlayerSearchInput");
-  const statusFilter = q("#adminPlayerStatusFilter");
-  if (!queryInput || !statusFilter) return;
-
-  queryInput.addEventListener("input", (e) => {
-    state.adminPlayerQuery = String(e.target.value || "");
-    renderAdmin();
-  });
-
-  statusFilter.addEventListener("change", (e) => {
-    state.adminPlayerStatusFilter = String(e.target.value || "ALL");
-    renderAdmin();
-  });
-}
-
-function expectedScore(a, b) {
-  return 1 / (1 + 10 ** ((b - a) / 400));
-}
-
-function simCalculate({ type, aElo, bElo, aScore, bScore }) {
-  const rule = tournamentRuleByType(type);
-  const resultA = aScore / (aScore + bScore);
-  const eA = expectedScore(aElo, bElo);
-  const eB = 1 - eA;
-  const deltaA = Math.round(Number(rule.kFactor) * (resultA - eA)) + Number(rule.basePoints);
-  const deltaB = Math.round(Number(rule.kFactor) * ((1 - resultA) - eB)) + Number(rule.basePoints);
+function normalizePlayer(row) {
   return {
-    aAfter: aElo + deltaA,
-    bAfter: bElo + deltaB,
-    deltaA,
-    deltaB,
+    id: toInt(row?.id),
+    name: String(row?.name || ""),
+    currentElo: toInt(row?.currentElo),
+    rank: toInt(row?.rank),
   };
 }
 
-function bindSimForm() {
-  q("#simForm").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const type = q("#simType").value;
-    const aElo = Number(q("#simAelo").value || 0);
-    const bElo = Number(q("#simBelo").value || 0);
-    const aScore = Number(q("#simAscore").value || 0);
-    const bScore = Number(q("#simBscore").value || 0);
-    if (aScore + bScore <= 0) {
-      showToast("점수 합계는 1 이상이어야 합니다.", true);
-      return;
-    }
-    state.simResult = simCalculate({ type, aElo, bElo, aScore, bScore });
-    renderSimulator();
-  });
-}
-
-function renderSimulator() {
-  const target = q("#simResult");
-  if (!state.simResult) {
-    target.textContent = "";
-    return;
-  }
-  const r = state.simResult;
-  target.innerHTML = `A: ${formatNum(r.aAfter)} (${r.deltaA >= 0 ? "+" : ""}${r.deltaA}) / B: ${formatNum(r.bAfter)} (${r.deltaB >= 0 ? "+" : ""}${r.deltaB})`;
-}
-
-async function refreshBootstrap() {
-  const data = await api("/api/bootstrap");
-  state.players = data.players || [];
-  state.recentMatches = data.recentMatches || [];
-  state.openTournament = data.openTournament || null;
-  state.tournamentRules = data.tournamentRules || [];
-  renderTournamentTypeSelectOptions();
-}
-
-async function refreshTournaments() {
-  const data = await api("/api/tournaments");
-  state.tournaments = data.tournaments || [];
-}
-
-async function refreshOverview() {
-  state.overview = await api("/api/stats/overview");
-}
-
-async function refreshAdminPlayers() {
-  const data = await api("/api/admin/players");
-  state.adminPlayers = data.players || [];
-
-  if (!state.adminPlayers.length) {
-    state.adminSelectedPlayerId = null;
-    return;
-  }
-
-  const exists = state.adminPlayers.some((player) => Number(player.id) === Number(state.adminSelectedPlayerId));
-  if (!exists) {
-    const firstActive = state.adminPlayers.find((player) => player.isActive);
-    state.adminSelectedPlayerId = Number(firstActive?.id || state.adminPlayers[0].id);
-  }
-}
-
-async function refreshAll(options = {}) {
-  const { loadingMessage = "데이터를 동기화하는 중..." } = options;
-  return withLoading(async () => {
-    await Promise.all([refreshBootstrap(), refreshTournaments(), refreshOverview(), refreshAdminPlayers()]);
-    state.lastSyncedAt = new Date();
-    renderAll();
-  }, loadingMessage);
-}
-
-async function checkHealth() {
-  try {
-    await api("/api/health");
-    q("#healthStatus").textContent = "API 정상";
-    q("#healthStatus").style.background = "#18a679";
-  } catch {
-    q("#healthStatus").textContent = "API 오류";
-    q("#healthStatus").style.background = "#d64545";
-  }
-}
-function normalizeSearch(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function syncParticipantSelectionWithPlayers() {
-  const validIds = new Set(state.players.map((player) => Number(player.id)));
-  state.participantPicker.selectedIds = state.participantPicker.selectedIds
-    .map((id) => Number(id))
-    .filter((id) => validIds.has(id));
-}
-
-function sortedPlayersByElo() {
-  return [...state.players].sort((a, b) => Number(b.currentElo) - Number(a.currentElo) || a.name.localeCompare(b.name));
-}
-
-function renderTournamentParticipantPicker() {
-  const searchEl = q("#participantSearchInput");
-  const selectedEl = q("#participantSelectedList");
-  const pickListEl = q("#participantPickList");
-  const countEl = q("#participantSelectionCount");
-  if (!searchEl || !selectedEl || !pickListEl || !countEl) return;
-
-  syncParticipantSelectionWithPlayers();
-
-  searchEl.value = state.participantPicker.query;
-  const query = normalizeSearch(state.participantPicker.query);
-  const players = sortedPlayersByElo();
-  const selectedSet = new Set(state.participantPicker.selectedIds);
-  const filteredPlayers = query
-    ? players.filter((player) => normalizeSearch(player.name).includes(query))
-    : players;
-  const selectedPlayers = players.filter((player) => selectedSet.has(Number(player.id)));
-
-  countEl.textContent = `${selectedSet.size}명 선택`;
-
-  selectedEl.innerHTML = selectedPlayers.length
-    ? selectedPlayers.map((player) => `
-      <button type="button" class="selected-chip" data-remove-participant-id="${player.id}" title="선택 해제">
-        <span>${player.name}</span>
-        <small>${formatNum(player.currentElo)}</small>
-      </button>
-    `).join("")
-    : '<p class="muted">아직 선택된 참가자가 없습니다.</p>';
-
-  pickListEl.innerHTML = filteredPlayers.length
-    ? filteredPlayers.map((player) => `
-      <button type="button" class="pick-item ${selectedSet.has(Number(player.id)) ? "active" : ""}" data-participant-id="${player.id}">
-        <span class="pick-name">${player.name}</span>
-        <span class="pick-elo">${formatNum(player.currentElo)} ELO</span>
-      </button>
-    `).join("")
-    : '<p class="muted">검색 결과가 없습니다.</p>';
-
-  const selectAllButton = q("#participantSelectAllBtn");
-  const selectTop8Button = q("#participantSelectTop8Btn");
-  const clearButton = q("#participantClearBtn");
-  if (selectAllButton) selectAllButton.disabled = !players.length || selectedSet.size === players.length;
-  if (selectTop8Button) selectTop8Button.disabled = !players.length;
-  if (clearButton) clearButton.disabled = selectedSet.size === 0;
-}
-
-function toggleParticipantSelection(playerId) {
-  const id = Number(playerId);
-  if (!Number.isInteger(id) || id <= 0) return;
-
-  syncParticipantSelectionWithPlayers();
-  const selectedSet = new Set(state.participantPicker.selectedIds);
-  if (selectedSet.has(id)) selectedSet.delete(id);
-  else selectedSet.add(id);
-  state.participantPicker.selectedIds = [...selectedSet];
-
-  renderTournamentParticipantPicker();
-}
-
-function bindTournamentParticipantPicker() {
-  const searchEl = q("#participantSearchInput");
-  const selectedEl = q("#participantSelectedList");
-  const pickListEl = q("#participantPickList");
-  if (!searchEl || !selectedEl || !pickListEl) return;
-
-  searchEl.addEventListener("input", (e) => {
-    state.participantPicker.query = String(e.target.value || "");
-    renderTournamentParticipantPicker();
-  });
-
-  searchEl.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-
-    const query = normalizeSearch(state.participantPicker.query);
-    if (!query) return;
-
-    const selectedSet = new Set(state.participantPicker.selectedIds);
-    const firstMatch = sortedPlayersByElo().find((player) => normalizeSearch(player.name).includes(query) && !selectedSet.has(Number(player.id)));
-    if (firstMatch) {
-      toggleParticipantSelection(firstMatch.id);
-    }
-  });
-
-  pickListEl.addEventListener("click", (e) => {
-    const button = e.target.closest("[data-participant-id]");
-    if (!button) return;
-    toggleParticipantSelection(button.dataset.participantId);
-  });
-
-  selectedEl.addEventListener("click", (e) => {
-    const button = e.target.closest("[data-remove-participant-id]");
-    if (!button) return;
-    toggleParticipantSelection(button.dataset.removeParticipantId);
-  });
-}
-
-function syncMatchFormatToggle() {
-  const formatSelect = q("#matchFormat");
-  const toggleRoot = q("#matchFormatToggle");
-  if (!formatSelect || !toggleRoot) return;
-
-  const value = formatSelect.value || "SINGLES";
-  toggleRoot.querySelectorAll("button[data-format]").forEach((button) => {
-    const isActive = button.dataset.format === value;
-    button.classList.toggle("active", isActive);
-    button.setAttribute("aria-pressed", isActive ? "true" : "false");
-  });
-}
-
-function setMatchFormat(value, options = {}) {
-  const { triggerChange = true } = options;
-  const formatSelect = q("#matchFormat");
-  if (!formatSelect) return;
-
-  const nextValue = value === "DOUBLES" ? "DOUBLES" : "SINGLES";
-  const changed = formatSelect.value !== nextValue;
-  formatSelect.value = nextValue;
-
-  if (changed && triggerChange) {
-    formatSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    return;
-  }
-
-  syncMatchFormatToggle();
-}
-
-function setDoublesToggleAvailability(enabled) {
-  const doublesButton = q("#matchFormatToggle button[data-format='DOUBLES']");
-  if (!doublesButton) return;
-  doublesButton.disabled = !enabled;
-  doublesButton.title = enabled ? "" : "복식은 참가자 4명 이상일 때 선택할 수 있습니다.";
-}
-
-function toggleDoubleInputs() {
-  const doubles = q("#matchFormat").value === "DOUBLES";
-  document.querySelectorAll(".team2").forEach((el) => {
-    el.style.display = doubles ? "grid" : "none";
-  });
-
-  const teamA2 = q("#matchA2");
-  const teamB2 = q("#matchB2");
-  if (teamA2) teamA2.disabled = !doubles;
-  if (teamB2) teamB2.disabled = !doubles;
-  syncMatchFormatToggle();
-}
-
-function readMatchPayloadFromForm() {
-  const matchFormat = q("#matchFormat").value;
-  const isDoubles = matchFormat === "DOUBLES";
+function normalizeAdminPlayer(row) {
   return {
-    matchFormat,
-    teamAPlayer1Id: Number(q("#matchA1").value),
-    teamAPlayer2Id: isDoubles ? Number(q("#matchA2").value) : null,
-    teamBPlayer1Id: Number(q("#matchB1").value),
-    teamBPlayer2Id: isDoubles ? Number(q("#matchB2").value) : null,
-    scoreA: Number(q("#matchScoreA").value || 0),
-    scoreB: Number(q("#matchScoreB").value || 0),
+    id: toInt(row?.id),
+    name: String(row?.name || ""),
+    currentElo: toInt(row?.currentElo),
+    isActive: Boolean(row?.isActive),
+    inOpenTournament: Boolean(row?.inOpenTournament),
+    matchCount: toInt(row?.matchCount),
+    createdAt: row?.createdAt || null,
+    updatedAt: row?.updatedAt || null,
   };
 }
 
-function setSelectValueIfPossible(selectEl, value) {
-  if (!selectEl || value == null) return;
-  const stringValue = String(value);
-  const hasOption = [...selectEl.options].some((option) => option.value === stringValue);
-  if (hasOption) selectEl.value = stringValue;
+function normalizeMatch(row) {
+  return {
+    id: toInt(row?.id),
+    matchId: toInt(row?.matchId ?? row?.id),
+    tournamentId: toInt(row?.tournamentId),
+    tournamentName: row?.tournamentName || "",
+    tournamentDate: row?.tournamentDate || "",
+    tournamentType: row?.tournamentType || "",
+    matchOrder: row?.matchOrder == null ? null : toInt(row?.matchOrder),
+    matchFormat: row?.matchFormat || "SINGLES",
+    teamAName: row?.teamAName || row?.myTeamName || "팀 A",
+    teamBName: row?.teamBName || row?.opponentTeamName || "팀 B",
+    scoreA: toInt(row?.scoreA ?? row?.myScore),
+    scoreB: toInt(row?.scoreB ?? row?.opponentScore),
+    deltaTeamA: toInt(row?.deltaTeamA ?? row?.myDelta),
+    deltaTeamB: toInt(row?.deltaTeamB ?? row?.opponentDelta),
+  };
 }
 
-function applyMatchSelectDefaults(participants) {
-  const ids = participants.map((player) => Number(player.playerId)).filter((id) => Number.isInteger(id));
-  if (!ids.length) return;
-
-  const a1 = ids[0] ?? null;
-  const b1 = ids[1] ?? ids[0] ?? null;
-  const a2 = ids[2] ?? ids[0] ?? null;
-  const b2 = ids[3] ?? ids[1] ?? ids[0] ?? null;
-
-  setSelectValueIfPossible(q("#matchA1"), a1);
-  setSelectValueIfPossible(q("#matchB1"), b1);
-  setSelectValueIfPossible(q("#matchA2"), a2);
-  setSelectValueIfPossible(q("#matchB2"), b2);
+function normalizeTournamentSummary(row) {
+  return {
+    id: toInt(row?.id),
+    name: String(row?.name || ""),
+    tournamentDate: row?.tournamentDate || "",
+    tournamentType: row?.tournamentType || "REGULAR",
+    kFactor: toInt(row?.kFactor),
+    basePoints: toInt(row?.basePoints),
+    status: row?.status || "OPEN",
+    matchCount: toInt(row?.matchCount),
+    participantCount: toInt(row?.participantCount),
+  };
 }
 
-function validateMatchPayload(payload) {
-  if (!payload.teamAPlayer1Id || !payload.teamBPlayer1Id) {
-    return "팀별 선수1을 선택하세요.";
-  }
-
-  if (payload.scoreA + payload.scoreB <= 0) {
-    return "점수 합계는 1 이상이어야 합니다.";
-  }
-
-  const playerIds = [payload.teamAPlayer1Id, payload.teamBPlayer1Id];
-  if (payload.matchFormat === "DOUBLES") {
-    if (!payload.teamAPlayer2Id || !payload.teamBPlayer2Id) {
-      return "복식은 팀별 선수 2명이 필요합니다.";
-    }
-    playerIds.push(payload.teamAPlayer2Id, payload.teamBPlayer2Id);
-  }
-
-  const unique = new Set(playerIds.map((value) => Number(value)));
-  if (unique.size !== playerIds.length) {
-    return "한 경기에서 같은 선수를 중복 선택할 수 없습니다.";
-  }
-
-  return null;
+function normalizeTournamentDetail(detail) {
+  if (!detail) return null;
+  return {
+    id: toInt(detail.id),
+    name: String(detail.name || ""),
+    tournamentDate: detail.tournamentDate || "",
+    tournamentType: detail.tournamentType || "REGULAR",
+    kFactor: toInt(detail.kFactor),
+    basePoints: toInt(detail.basePoints),
+    status: detail.status || "OPEN",
+    participants: Array.isArray(detail.participants)
+      ? detail.participants.map((p) => ({
+          playerId: toInt(p.playerId),
+          name: p.name || "",
+          seedElo: toInt(p.seedElo),
+          seedRank: toInt(p.seedRank),
+          pendingDelta: toInt(p.pendingDelta),
+          projectedElo: toInt(p.projectedElo),
+        }))
+      : [],
+    matches: Array.isArray(detail.matches) ? detail.matches.map(normalizeMatch) : [],
+    ratingEvents: Array.isArray(detail.ratingEvents)
+      ? detail.ratingEvents.map((e) => ({
+          playerId: toInt(e.playerId),
+          name: e.name || "",
+          eloBefore: toInt(e.eloBefore),
+          delta: toInt(e.delta),
+          eloAfter: toInt(e.eloAfter),
+        }))
+      : [],
+    scheduleMatrix: detail.scheduleMatrix && typeof detail.scheduleMatrix === "object" ? detail.scheduleMatrix : {},
+  };
 }
 
-function bindPlayerForm() {
-  q("#playerForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = q("#playerNameInput").value.trim();
-    if (!name) return;
-    try {
-      await api("/api/players", "POST", { name });
-      q("#playerNameInput").value = "";
-      showToast("선수 등록 완료");
-      await refreshAll({ loadingMessage: "선수 목록을 갱신하는 중..." });
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
+function normalizeOverview(raw) {
+  if (!raw) return null;
+  return {
+    summary: {
+      players: toInt(raw.summary?.players),
+      finalizedTournaments: toInt(raw.summary?.finalizedTournaments),
+      openTournaments: toInt(raw.summary?.openTournaments),
+      finalizedMatches: toInt(raw.summary?.finalizedMatches),
+      avgElo: toInt(raw.summary?.avgElo),
+    },
+    topPlayers: Array.isArray(raw.topPlayers) ? raw.topPlayers.map(normalizePlayer) : [],
+    recentTournaments: Array.isArray(raw.recentTournaments)
+      ? raw.recentTournaments.map((row) => ({
+          id: toInt(row.id),
+          name: row.name || "",
+          tournamentDate: row.tournamentDate || "",
+          tournamentType: row.tournamentType || "REGULAR",
+          status: row.status || "OPEN",
+          matchCount: toInt(row.matchCount),
+        }))
+      : [],
+    eloHistogram: raw.eloHistogram && typeof raw.eloHistogram === "object" ? raw.eloHistogram : {},
+  };
 }
 
-function bindTournamentCreateForm() {
-  q("#tournamentCreateForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try {
-      const name = q("#tournamentName").value.trim();
-      const tournamentDate = q("#tournamentDate").value;
-      const tournamentType = q("#tournamentType").value;
-      syncParticipantSelectionWithPlayers();
-      const participantIds = [...state.participantPicker.selectedIds];
-      if (participantIds.length < 2) {
-        showToast("참가자는 2명 이상 선택해야 합니다.", true);
-        return;
-      }
+const MatchCard = {
+  name: "MatchCard",
+  props: {
+    match: { type: Object, required: true },
+    typeLabel: { type: String, default: "" },
+    showMeta: { type: Boolean, default: true },
+    deletable: { type: Boolean, default: false },
+  },
+  emits: ["delete"],
+  computed: {
+    winnerSide() {
+      const a = Number(this.match?.scoreA || 0);
+      const b = Number(this.match?.scoreB || 0);
+      if (a > b) return "A";
+      if (b > a) return "B";
+      return "DRAW";
+    },
+    cardClass() {
+      if (this.winnerSide === "A") return "winner-a";
+      if (this.winnerSide === "B") return "winner-b";
+      return "draw";
+    },
+  },
+  methods: {
+    formatSigned,
+    matchFormatLabel,
+  },
+  template: `
+    <article class="match-card" :class="cardClass">
+      <header class="match-head">
+        <div class="match-head-left">
+          <span v-if="match.matchOrder != null" class="match-order">#{{ match.matchOrder }}</span>
+          <span class="match-format">{{ matchFormatLabel(match.matchFormat) }}</span>
+        </div>
+        <button v-if="deletable" type="button" class="btn danger mini" @click="$emit('delete')">삭제</button>
+      </header>
 
-      await api("/api/tournaments", "POST", { name, tournamentDate, tournamentType, participantIds });
-      state.participantPicker.selectedIds = [];
-      state.participantPicker.query = "";
-      showToast("대회 시작 완료");
-      await refreshAll({ loadingMessage: "대회 데이터를 준비하는 중..." });
-      setTab("tournament");
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-}
+      <div v-if="showMeta" class="match-meta">
+        <span v-if="match.tournamentDate">{{ match.tournamentDate }}</span>
+        <span v-if="match.tournamentName">{{ match.tournamentName }}</span>
+        <span v-if="typeLabel">{{ typeLabel }}</span>
+      </div>
 
-function bindMatchForm() {
-  const formatSelect = q("#matchFormat");
-  const formatToggle = q("#matchFormatToggle");
-
-  formatSelect.addEventListener("change", () => {
-    if (state.openTournament?.participants?.length) {
-      const draftPayload = readMatchPayloadFromForm();
-      const isInvalid = Boolean(validateMatchPayload({ ...draftPayload, scoreA: 1, scoreB: 0 }));
-      if (isInvalid) {
-        applyMatchSelectDefaults(state.openTournament.participants);
-      }
-    }
-    toggleDoubleInputs();
-  });
-
-  formatToggle.addEventListener("click", (e) => {
-    const button = e.target.closest("button[data-format]");
-    if (!button || button.disabled) return;
-    setMatchFormat(button.dataset.format);
-  });
-
-  q("#matchForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!state.openTournament) {
-      showToast("진행 중 대회가 없습니다.", true);
-      return;
-    }
-
-    try {
-      const payload = readMatchPayloadFromForm();
-
-      const validationError = validateMatchPayload(payload);
-      if (validationError) {
-        showToast(validationError, true);
-        return;
-      }
-
-      await api(`/api/tournaments/${state.openTournament.id}/matches`, "POST", payload);
-      showToast("경기 추가 완료");
-      await refreshAll({ loadingMessage: "대회 데이터를 갱신하는 중..." });
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  syncMatchFormatToggle();
-}
-
-function bindTournamentActionButtons() {
-  q("#finalizeTournamentBtn").addEventListener("click", async () => {
-    if (!state.openTournament) return;
-    if (!confirm("대회를 종료하시겠습니까?")) return;
-    try {
-      await api(`/api/tournaments/${state.openTournament.id}/finalize`, "POST");
-      showToast("대회 종료 완료");
-      await refreshAll({ loadingMessage: "대회 종료 결과를 반영하는 중..." });
-      await loadRecordDefault();
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  q("#cancelTournamentBtn").addEventListener("click", async () => {
-    if (!state.openTournament) return;
-    if (!confirm("진행 중 대회를 취소하시겠습니까?")) return;
-    try {
-      await api(`/api/tournaments/${state.openTournament.id}/cancel`, "POST");
-      showToast("대회 취소 완료");
-      await refreshAll({ loadingMessage: "대회 상태를 갱신하는 중..." });
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  q("#openMatches").addEventListener("click", async (e) => {
-    const btn = e.target.closest("button[data-delete-id]");
-    if (!btn || !state.openTournament) return;
-    if (!confirm("해당 경기를 삭제할까요?")) return;
-    try {
-      await api(`/api/tournaments/${state.openTournament.id}/matches/${btn.dataset.deleteId}`, "DELETE");
-      showToast("경기 삭제 완료");
-      await refreshAll({ loadingMessage: "대회 데이터를 갱신하는 중..." });
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-}
-
-function bindRecordActions() {
-  q("#loadRecordBtn").addEventListener("click", async () => {
-    await loadRecordBySelect();
-  });
-
-  q("#recordTournamentSelect").addEventListener("change", async () => {
-    await loadRecordBySelect();
-  });
-}
-
-async function loadRecordBySelect() {
-  const id = Number(q("#recordTournamentSelect").value || 0);
-  if (!id) {
-    state.recordTournament = null;
-    renderRecord();
-    return;
-  }
-  try {
-    const data = await withLoading(() => api(`/api/tournaments/${id}/report`), "대회 기록을 불러오는 중...");
-    state.recordTournament = data.tournament;
-    renderRecord();
-  } catch (err) {
-    showToast(err.message, true);
-  }
-}
-
-async function loadRecordDefault() {
-  const finalized = state.tournaments.filter((t) => t.status === "FINALIZED");
-  if (!finalized.length) {
-    state.recordTournament = null;
-    renderRecord();
-    return;
-  }
-  q("#recordTournamentSelect").value = String(finalized[0].id);
-  await loadRecordBySelect();
-}
-
-async function loadPlayerStatsBySelect() {
-  const id = Number(q("#playerSelect").value || 0);
-  if (!id) return;
-  try {
-    const data = await withLoading(() => api(`/api/players/${id}/stats`), "선수 기록을 불러오는 중...");
-    state.playerStats = data;
-    renderPlayerStats();
-  } catch (err) {
-    showToast(err.message, true);
-  }
-}
-
-function bindPlayerActions() {
-  q("#playerSelect").addEventListener("change", async () => {
-    await loadPlayerStatsBySelect();
-  });
-
-  q("#loadPlayerBtn").addEventListener("click", async () => {
-    await loadPlayerStatsBySelect();
-  });
-}
-
-function bindStatsActions() {
-  q("#refreshStatsBtn").addEventListener("click", async () => {
-    try {
-      await withLoading(() => refreshOverview(), "통계를 갱신하는 중...");
-      renderStats();
-      renderQuickMetrics();
-      showToast("통계 갱신 완료");
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-}
-
-function getSelectedAdminPlayer() {
-  return state.adminPlayers.find((player) => Number(player.id) === Number(state.adminSelectedPlayerId)) || null;
-}
-
-function bindAdminActions() {
-  const playerSelect = q("#adminPlayerSelect");
-  if (!playerSelect) return;
-
-  playerSelect.addEventListener("change", (e) => {
-    state.adminSelectedPlayerId = Number(e.target.value || 0) || null;
-    renderAdmin();
-  });
-
-  q("#adminRenameForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const player = getSelectedAdminPlayer();
-    if (!player) {
-      showToast("선수를 먼저 선택하세요.", true);
-      return;
-    }
-
-    const name = q("#adminRenameInput").value.trim();
-    if (!name) {
-      showToast("변경할 이름을 입력하세요.", true);
-      return;
-    }
-
-    try {
-      await api(`/api/admin/players/${player.id}`, "PATCH", { name });
-      q("#adminRenameInput").value = "";
-      showToast("선수 이름 변경 완료");
-      await refreshAll({ loadingMessage: "선수 데이터를 갱신하는 중..." });
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  q("#adminEloForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const player = getSelectedAdminPlayer();
-    if (!player) {
-      showToast("선수를 먼저 선택하세요.", true);
-      return;
-    }
-
-    const eloRaw = q("#adminEloInput").value;
-    if (eloRaw === "") {
-      showToast("변경할 ELO를 입력하세요.", true);
-      return;
-    }
-
-    try {
-      await api(`/api/admin/players/${player.id}`, "PATCH", { currentElo: Number(eloRaw) });
-      q("#adminEloInput").value = "";
-      showToast("선수 점수 조정 완료");
-      await refreshAll({ loadingMessage: "점수 변경 내용을 반영하는 중..." });
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  q("#adminDeletePlayerBtn").addEventListener("click", async () => {
-    const player = getSelectedAdminPlayer();
-    if (!player) {
-      showToast("선수를 먼저 선택하세요.", true);
-      return;
-    }
-    if (!confirm(`'${player.name}' 선수를 삭제(비활성화)할까요?`)) return;
-
-    try {
-      await api(`/api/admin/players/${player.id}`, "DELETE");
-      showToast("선수 비활성화 완료");
-      await refreshAll({ loadingMessage: "선수 목록을 갱신하는 중..." });
-      renderAdmin();
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  q("#ruleEditorRows").addEventListener("click", async (e) => {
-    const button = e.target.closest("button[data-save-rule]");
-    if (!button) return;
-    const type = button.dataset.saveRule;
-    const kInput = q(`#ruleK-${type}`);
-    const baseInput = q(`#ruleBase-${type}`);
-    if (!kInput || !baseInput) return;
-
-    try {
-      await api(`/api/settings/tournament-rules/${type}`, "PATCH", {
-        kFactor: Number(kInput.value),
-        basePoints: Number(baseInput.value),
-      });
-      showToast(`${tournamentTypeLabel(type)} 규칙 저장 완료`);
-      await refreshAll({ loadingMessage: "대회 규칙을 반영하는 중..." });
-    } catch (err) {
-      showToast(err.message, true);
-    }
-  });
-
-  q("#adminPlayersTable").addEventListener("click", (e) => {
-    const button = e.target.closest("button[data-admin-select]");
-    if (!button) return;
-    state.adminSelectedPlayerId = Number(button.dataset.adminSelect || 0) || null;
-    renderAdmin();
-  });
-}
-
-function renderRanking() {
-  const root = q("#rankingTable");
-  const searchInput = q("#rankingSearchInput");
-  if (searchInput) searchInput.value = state.rankingQuery;
-
-  if (!state.players.length) {
-    root.innerHTML = '<p class="muted">선수가 없습니다.</p>';
-    return;
-  }
-
-  const query = normalizeSearch(state.rankingQuery);
-  const filtered = query
-    ? state.players.filter((player) => normalizeSearch(player.name).includes(query))
-    : state.players;
-
-  if (!filtered.length) {
-    root.innerHTML = '<p class="muted">검색 조건에 맞는 선수가 없습니다.</p>';
-    return;
-  }
-
-  const rows = filtered.map((p) => `
-    <tr>
-      <td class="num-col">${p.rank}</td>
-      <td>${p.name}</td>
-      <td class="num-col">${formatNum(p.currentElo)}</td>
-    </tr>
-  `).join("");
-
-  root.innerHTML = tableWrap(`
-    <table class="table">
-      <thead><tr><th>순위</th><th>이름</th><th>ELO</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `);
-}
-
-function renderRecentMatches() {
-  const root = q("#recentMatches");
-  const filterSelect = q("#recentMatchFormatFilter");
-  if (filterSelect) filterSelect.value = state.recentMatchFormatFilter;
-
-  const formatFilter = state.recentMatchFormatFilter;
-  const matches = formatFilter === "ALL"
-    ? state.recentMatches
-    : state.recentMatches.filter((match) => match.matchFormat === formatFilter);
-
-  if (!matches.length) {
-    root.innerHTML = '<p class="muted">조건에 맞는 최근 경기가 없습니다.</p>';
-    return;
-  }
-
-  root.innerHTML = `
-    <div class="match-card-list">
-      ${matches.map((m) => renderMatchResultCard(m, { withMeta: true })).join("")}
-    </div>
-  `;
-}
-
-function renderLastSyncAt() {
-  const target = q("#lastSyncAt");
-  if (!target) return;
-  target.textContent = `마지막 동기화: ${formatDateTime(state.lastSyncedAt)}`;
-}
-
-function renderQuickMetrics() {
-  const summary = state.overview?.summary;
-  const players = summary?.players ?? state.players.length;
-  const openTournaments = summary?.openTournaments ?? (state.openTournament ? 1 : 0);
-  const finalizedTournaments = summary?.finalizedTournaments ?? state.tournaments.filter((t) => t.status === "FINALIZED").length;
-  const finalizedMatches = summary?.finalizedMatches ?? 0;
-
-  const playersEl = q("#metricPlayers");
-  const openEl = q("#metricOpenTournaments");
-  const finalizedEl = q("#metricFinalizedTournaments");
-  const matchEl = q("#metricFinalizedMatches");
-  if (playersEl) playersEl.textContent = formatNum(players);
-  if (openEl) openEl.textContent = formatNum(openTournaments);
-  if (finalizedEl) finalizedEl.textContent = formatNum(finalizedTournaments);
-  if (matchEl) matchEl.textContent = formatNum(finalizedMatches);
-}
-function fillSelectOptions(selectEl, items, selectedValue = null) {
-  selectEl.innerHTML = items.map((item) => `<option value="${item.id}">${item.name}</option>`).join("");
-  if (selectedValue != null) selectEl.value = String(selectedValue);
-}
-
-function renderTournament() {
-  const open = state.openTournament;
-  const createCard = q("#createTournamentCard");
-  const openView = q("#openTournamentView");
-  renderTournamentParticipantPicker();
-
-  if (!open) {
-    createCard.style.display = "block";
-    openView.innerHTML = '<p class="muted">진행 중 대회 없음</p>';
-    q("#openParticipants").innerHTML = '<p class="muted">대회 시작 후 표시됩니다.</p>';
-    q("#openMatches").innerHTML = '<p class="muted">대회 시작 후 표시됩니다.</p>';
-    q("#matchForm").querySelectorAll("input,select,button").forEach((el) => { el.disabled = true; });
-    setDoublesToggleAvailability(false);
-    setMatchFormat("SINGLES", { triggerChange: false });
-    q("#finalizeTournamentBtn").disabled = true;
-    q("#cancelTournamentBtn").disabled = true;
-    return;
-  }
-
-  createCard.style.display = "none";
-  openView.innerHTML = `
-    <div><strong>${open.name}</strong></div>
-    <div class="muted">${open.tournamentDate} · ${tournamentTypeLabel(open.tournamentType)} · K=${open.kFactor} · base=${open.basePoints}</div>
-    <div class="muted">참가자 ${open.participants.length}명 · 경기 ${open.matchCount}개</div>
-  `;
-
-  const participantRows = [...open.participants]
-    .sort((a, b) => b.projectedElo - a.projectedElo || a.name.localeCompare(b.name))
-    .map((p, idx) => `
-      <tr>
-        <td class="num-col">${idx + 1}</td>
-        <td>${p.name}</td>
-        <td>
-          <div class="player-score-cell">
-            <strong>${formatNum(p.projectedElo)}</strong>
-            <span class="cell-muted">시드 ${formatNum(p.seedElo)} · 점수 ${formatSigned(p.pendingDelta)}</span>
+      <div class="match-body">
+        <div class="team-row" :class="{ winner: winnerSide === 'A', loser: winnerSide === 'B' }">
+          <div class="team-main">
+            <span class="team-side">A</span>
+            <span class="team-name">{{ match.teamAName }}</span>
           </div>
-        </td>
-      </tr>
-    `).join("");
+          <div class="team-score">{{ match.scoreA }}</div>
+        </div>
 
-  q("#openParticipants").innerHTML = tableWrap(`
-    <table class="table">
-      <thead><tr><th>#</th><th>이름</th><th>ELO/점수</th></tr></thead>
-      <tbody>${participantRows}</tbody>
-    </table>
-  `);
+        <div class="team-row" :class="{ winner: winnerSide === 'B', loser: winnerSide === 'A' }">
+          <div class="team-main">
+            <span class="team-side">B</span>
+            <span class="team-name">{{ match.teamBName }}</span>
+          </div>
+          <div class="team-score">{{ match.scoreB }}</div>
+        </div>
+      </div>
 
-  q("#openMatches").innerHTML = open.matches.length
-    ? `<div class="match-card-list">${open.matches.map((m) => renderMatchResultCard(
-      { ...m, tournamentDate: open.tournamentDate, tournamentName: open.name, tournamentType: open.tournamentType },
-      { withMeta: false, showDelete: true, deleteId: m.id }
-    )).join("")}</div>`
-    : '<p class="muted">아직 기록된 경기가 없습니다.</p>';
-
-  const prevA1 = q("#matchA1").value;
-  const prevA2 = q("#matchA2").value;
-  const prevB1 = q("#matchB1").value;
-  const prevB2 = q("#matchB2").value;
-  const participantOptions = open.participants.map((p) => ({ id: p.playerId, name: p.name }));
-  fillSelectOptions(q("#matchA1"), participantOptions);
-  fillSelectOptions(q("#matchA2"), participantOptions);
-  fillSelectOptions(q("#matchB1"), participantOptions);
-  fillSelectOptions(q("#matchB2"), participantOptions);
-
-  setSelectValueIfPossible(q("#matchA1"), prevA1);
-  setSelectValueIfPossible(q("#matchA2"), prevA2);
-  setSelectValueIfPossible(q("#matchB1"), prevB1);
-  setSelectValueIfPossible(q("#matchB2"), prevB2);
-
-  const formatSelect = q("#matchFormat");
-  const doublesOption = formatSelect.querySelector("option[value='DOUBLES']");
-  const doublesAvailable = open.participants.length >= 4;
-  if (doublesOption) doublesOption.disabled = !doublesAvailable;
-  if (!doublesAvailable && formatSelect.value === "DOUBLES") setMatchFormat("SINGLES", { triggerChange: false });
-
-  const currentPayload = {
-    matchFormat: formatSelect.value,
-    teamAPlayer1Id: Number(q("#matchA1").value),
-    teamAPlayer2Id: formatSelect.value === "DOUBLES" ? Number(q("#matchA2").value) : null,
-    teamBPlayer1Id: Number(q("#matchB1").value),
-    teamBPlayer2Id: formatSelect.value === "DOUBLES" ? Number(q("#matchB2").value) : null,
-    scoreA: 1,
-    scoreB: 0,
-  };
-  if (validateMatchPayload(currentPayload)) {
-    applyMatchSelectDefaults(open.participants);
-  }
-
-  q("#matchForm").querySelectorAll("input,select,button").forEach((el) => { el.disabled = false; });
-  setDoublesToggleAvailability(doublesAvailable);
-  q("#finalizeTournamentBtn").disabled = false;
-  q("#cancelTournamentBtn").disabled = false;
-  toggleDoubleInputs();
-}
-
-function renderRecord() {
-  const root = q("#recordContent");
-  const finalized = state.tournaments.filter((t) => t.status === "FINALIZED");
-  q("#recordTournamentSelect").innerHTML = finalized.map((t) => `<option value="${t.id}">${t.tournamentDate} · ${t.name}</option>`).join("");
-
-  if (!state.recordTournament) {
-    root.innerHTML = '<article class="card"><p class="muted">조회할 대회를 선택하세요.</p></article>';
-    return;
-  }
-
-  const t = state.recordTournament;
-  const ratingRows = (t.ratingEvents || []).map((r) => `
-    <tr><td>${r.name}</td><td class="num-col">${formatNum(r.eloBefore)}</td><td class="num-col">${formatSigned(r.delta)}</td><td class="num-col">${formatNum(r.eloAfter)}</td></tr>
-  `).join("");
-
-  const matchCards = (t.matches || []).map((m) =>
-    renderMatchResultCard(
-      { ...m, tournamentDate: t.tournamentDate, tournamentName: t.name, tournamentType: t.tournamentType },
-      { withMeta: false }
-    )
-  ).join("");
-
-  root.innerHTML = `
-    <article class="card">
-      <h2>${t.name}</h2>
-      <p class="muted">${t.tournamentDate} · ${tournamentTypeLabel(t.tournamentType)} · 경기 ${t.matchCount}개</p>
+      <footer class="delta-row">
+        <span class="delta-chip" :class="Number(match.deltaTeamA) >= 0 ? 'up' : 'down'">A {{ formatSigned(match.deltaTeamA) }}</span>
+        <span class="delta-chip" :class="Number(match.deltaTeamB) >= 0 ? 'up' : 'down'">B {{ formatSigned(match.deltaTeamB) }}</span>
+      </footer>
     </article>
-    <div class="grid two">
-      <article class="card">
-        <h3>ELO 변동</h3>
-        ${tableWrap(`<table class="table"><thead><tr><th>선수</th><th>Before</th><th>Delta</th><th>After</th></tr></thead><tbody>${ratingRows}</tbody></table>`)}
-      </article>
-      <article class="card">
-        <h3>경기 결과</h3>
-        ${matchCards ? `<div class="match-card-list">${matchCards}</div>` : '<p class="muted">기록된 경기가 없습니다.</p>'}
-      </article>
+  `,
+};
+
+const app = createApp({
+  components: { MatchCard },
+
+  data() {
+    return {
+      tabs: TABS,
+      activeTab: "dashboard",
+      loading: {
+        count: 0,
+        message: "데이터를 동기화하는 중...",
+      },
+      toast: {
+        visible: false,
+        error: false,
+        message: "",
+        timer: null,
+      },
+      health: {
+        ok: null,
+        text: "API 확인 중...",
+      },
+      lastSyncedAt: null,
+
+      players: [],
+      recentMatches: [],
+      openTournament: null,
+      tournaments: [],
+      selectedRecordTournamentId: "",
+      recordTournament: null,
+      selectedPlayerId: "",
+      playerStats: null,
+      overview: null,
+      tournamentRules: [],
+      ruleDrafts: {
+        REGULAR: { kFactor: 200, basePoints: 4 },
+        ADHOC: { kFactor: 100, basePoints: 1 },
+        FRIENDLY: { kFactor: 0, basePoints: 0 },
+      },
+      adminPlayers: [],
+      selectedAdminPlayerId: "",
+
+      ui: {
+        rankingQuery: "",
+        recentFormat: "ALL",
+        participantQuery: "",
+        participantIds: [],
+        adminQuery: "",
+        adminStatus: "ALL",
+      },
+
+      forms: {
+        playerName: "",
+        tournamentName: "",
+        tournamentDate: new Date().toISOString().slice(0, 10),
+        tournamentType: "REGULAR",
+        matchFormat: "SINGLES",
+        matchA1: "",
+        matchA2: "",
+        matchB1: "",
+        matchB2: "",
+        matchScoreA: 6,
+        matchScoreB: 4,
+        simType: "REGULAR",
+        simAelo: 2000,
+        simBelo: 2000,
+        simAscore: 6,
+        simBscore: 4,
+        adminRename: "",
+        adminElo: null,
+      },
+
+      simResult: null,
+    };
+  },  computed: {
+    isLoading() {
+      return this.loading.count > 0;
+    },
+
+    activeRules() {
+      return this.tournamentRules.length ? this.tournamentRules : DEFAULT_RULES;
+    },
+
+    ruleMap() {
+      const map = new Map();
+      for (const rule of this.activeRules) {
+        map.set(rule.tournamentType, rule);
+      }
+      return map;
+    },
+
+    quickMetrics() {
+      const openCount = this.tournaments.filter((t) => t.status === "OPEN").length;
+      const finalizedCount = this.tournaments.filter((t) => t.status === "FINALIZED").length;
+      return [
+        { label: "활성 선수", value: this.players.length, help: "운영 대상 선수" },
+        { label: "진행 중 대회", value: openCount, help: "OPEN 상태" },
+        { label: "종료 대회", value: finalizedCount, help: "FINALIZED 누적" },
+        { label: "종료 경기", value: toInt(this.overview?.summary?.finalizedMatches), help: "통계 기준 경기" },
+      ];
+    },
+
+    filteredRankingPlayers() {
+      const query = normalizeSearch(this.ui.rankingQuery);
+      const rows = [...this.players].sort((a, b) => Number(a.rank) - Number(b.rank));
+      if (!query) return rows;
+      return rows.filter((player) => normalizeSearch(player.name).includes(query));
+    },
+
+    filteredRecentMatches() {
+      return this.recentMatches.filter((match) => {
+        if (this.ui.recentFormat === "ALL") return true;
+        return match.matchFormat === this.ui.recentFormat;
+      });
+    },
+
+    participantPool() {
+      return [...this.players].sort((a, b) => b.currentElo - a.currentElo || a.name.localeCompare(b.name, "ko"));
+    },
+
+    filteredParticipantPool() {
+      const query = normalizeSearch(this.ui.participantQuery);
+      if (!query) return this.participantPool;
+      return this.participantPool.filter((player) => normalizeSearch(player.name).includes(query));
+    },
+
+    selectedParticipants() {
+      const set = new Set(this.ui.participantIds.map((id) => toInt(id)).filter((id) => id > 0));
+      return this.participantPool.filter((player) => set.has(toInt(player.id)));
+    },
+
+    openTournamentParticipants() {
+      return (this.openTournament?.participants || []).slice().sort((a, b) => a.seedRank - b.seedRank || a.name.localeCompare(b.name, "ko"));
+    },
+
+    openTournamentMatches() {
+      return (this.openTournament?.matches || []).slice().sort((a, b) => a.matchOrder - b.matchOrder || a.matchId - b.matchId);
+    },
+
+    recordTournamentOptions() {
+      return [...this.tournaments].sort((a, b) => String(b.tournamentDate).localeCompare(String(a.tournamentDate)) || b.id - a.id);
+    },
+
+    recordMatrixPlayers() {
+      if (!this.recordTournament?.scheduleMatrix) return [];
+      return Object.keys(this.recordTournament.scheduleMatrix);
+    },
+
+    recordMatrixRows() {
+      const names = this.recordMatrixPlayers;
+      if (!names.length) return [];
+      return names.map((rowName) => ({
+        name: rowName,
+        cells: names.map((colName) => ({
+          key: colName,
+          value: this.recordTournament.scheduleMatrix?.[rowName]?.[colName] || "",
+        })),
+      }));
+    },
+
+    histogramRows() {
+      const hist = this.overview?.eloHistogram || {};
+      const rows = Object.entries(hist)
+        .map(([range, count]) => {
+          const [start] = String(range).split("-");
+          return {
+            range,
+            count: toInt(count),
+            sortKey: toInt(start),
+          };
+        })
+        .sort((a, b) => a.sortKey - b.sortKey);
+      const max = Math.max(1, ...rows.map((row) => row.count));
+      return rows.map((row) => ({
+        ...row,
+        ratio: Math.round((row.count / max) * 100),
+      }));
+    },
+
+    filteredAdminPlayers() {
+      const query = normalizeSearch(this.ui.adminQuery);
+      return this.adminPlayers.filter((player) => {
+        if (this.ui.adminStatus === "ACTIVE" && !player.isActive) return false;
+        if (this.ui.adminStatus === "INACTIVE" && player.isActive) return false;
+        if (!query) return true;
+        return normalizeSearch(player.name).includes(query);
+      });
+    },
+
+    selectedAdminPlayer() {
+      const id = toInt(this.selectedAdminPlayerId);
+      return this.adminPlayers.find((player) => player.id === id) || null;
+    },
+
+    playerMatchCards() {
+      const rows = this.playerStats?.matches || [];
+      return rows.map((match) => normalizeMatch(match));
+    },
+  },
+
+  methods: {
+    formatNum,
+    formatSigned,
+    formatDateTime,
+    matchFormatLabel,
+    tournamentStatusLabel,
+
+    tournamentTypeLabel(type) {
+      return this.ruleMap.get(type)?.displayName || String(type || "-");
+    },
+
+    statusClass(status) {
+      if (status === "OPEN") return "open";
+      if (status === "FINALIZED") return "active";
+      if (status === "CANCELED") return "inactive";
+      return "";
+    },
+
+    showToast(message, isError = false) {
+      if (!message) return;
+      if (this.toast.timer) {
+        clearTimeout(this.toast.timer);
+        this.toast.timer = null;
+      }
+      this.toast.message = message;
+      this.toast.error = isError;
+      this.toast.visible = true;
+      this.toast.timer = setTimeout(() => {
+        this.toast.visible = false;
+      }, 2400);
+    },
+
+    setLoading(enabled, message = "데이터를 동기화하는 중...") {
+      if (enabled) {
+        this.loading.count += 1;
+        this.loading.message = message;
+      } else {
+        this.loading.count = Math.max(0, this.loading.count - 1);
+      }
+    },
+
+    async withLoading(message, work) {
+      this.setLoading(true, message);
+      try {
+        return await work();
+      } finally {
+        this.setLoading(false);
+      }
+    },
+
+    async checkHealth() {
+      try {
+        await requestApi("/api/health");
+        this.health.ok = true;
+        this.health.text = "API 정상";
+      } catch (error) {
+        this.health.ok = false;
+        this.health.text = "API 오류";
+        throw error;
+      }
+    },
+
+    applyRuleList(rules) {
+      const source = Array.isArray(rules) && rules.length ? rules : DEFAULT_RULES;
+      this.tournamentRules = source.map((rule) => ({
+        tournamentType: rule.tournamentType,
+        displayName: rule.displayName,
+        kFactor: toInt(rule.kFactor),
+        basePoints: toInt(rule.basePoints),
+      }));
+
+      const drafts = {};
+      for (const rule of this.tournamentRules) {
+        drafts[rule.tournamentType] = {
+          kFactor: toInt(rule.kFactor),
+          basePoints: toInt(rule.basePoints),
+        };
+      }
+      this.ruleDrafts = drafts;
+
+      if (!this.tournamentRules.some((rule) => rule.tournamentType === this.forms.tournamentType)) {
+        this.forms.tournamentType = this.tournamentRules[0]?.tournamentType || "REGULAR";
+      }
+      if (!this.tournamentRules.some((rule) => rule.tournamentType === this.forms.simType)) {
+        this.forms.simType = this.tournamentRules[0]?.tournamentType || "REGULAR";
+      }
+    },
+
+    syncParticipantSelection() {
+      const valid = new Set(this.players.map((player) => toInt(player.id)));
+      this.ui.participantIds = this.ui.participantIds
+        .map((id) => toInt(id))
+        .filter((id) => id > 0 && valid.has(id));
+    },
+
+    syncMatchSelectDefaults() {
+      const ids = this.openTournamentParticipants.map((player) => toInt(player.playerId)).filter((id) => id > 0);
+      const has = (value) => ids.includes(toInt(value));
+      const pick = (index) => (ids[index] ? String(ids[index]) : "");
+
+      if (!has(this.forms.matchA1)) this.forms.matchA1 = pick(0);
+      if (!has(this.forms.matchB1)) this.forms.matchB1 = pick(1);
+
+      if (this.forms.matchFormat === "DOUBLES") {
+        if (!has(this.forms.matchA2)) this.forms.matchA2 = pick(2);
+        if (!has(this.forms.matchB2)) this.forms.matchB2 = pick(3);
+      } else {
+        this.forms.matchA2 = "";
+        this.forms.matchB2 = "";
+      }
+    },
+
+    isParticipantSelected(playerId) {
+      return this.ui.participantIds.map((id) => toInt(id)).includes(toInt(playerId));
+    },
+
+    toggleParticipant(playerId) {
+      const id = toInt(playerId);
+      if (id <= 0) return;
+      if (this.isParticipantSelected(id)) {
+        this.ui.participantIds = this.ui.participantIds.filter((pickedId) => toInt(pickedId) !== id);
+        return;
+      }
+      this.ui.participantIds = [...this.ui.participantIds.map((pickedId) => toInt(pickedId)), id];
+    },
+
+    clearParticipantSelection() {
+      this.ui.participantIds = [];
+    },
+
+    selectAllParticipants() {
+      this.ui.participantIds = this.participantPool.map((player) => toInt(player.id));
+    },
+
+    selectTopParticipants(limit = 8) {
+      this.ui.participantIds = this.participantPool.slice(0, Math.max(1, toInt(limit, 8))).map((player) => toInt(player.id));
+    },
+
+    addFirstSearchedParticipant() {
+      const target = this.filteredParticipantPool.find((player) => !this.isParticipantSelected(player.id));
+      if (target) {
+        this.toggleParticipant(target.id);
+      }
+    },
+
+    setMatchFormat(value) {
+      this.forms.matchFormat = value === "DOUBLES" ? "DOUBLES" : "SINGLES";
+    },
+
+    async refreshBootstrap() {
+      const data = await requestApi("/api/bootstrap");
+      this.players = Array.isArray(data.players) ? data.players.map(normalizePlayer) : [];
+      this.recentMatches = Array.isArray(data.recentMatches) ? data.recentMatches.map(normalizeMatch) : [];
+      this.openTournament = normalizeTournamentDetail(data.openTournament);
+      this.applyRuleList(data.tournamentRules);
+
+      this.syncParticipantSelection();
+      this.syncMatchSelectDefaults();
+
+      if (!this.selectedPlayerId && this.players.length) {
+        this.selectedPlayerId = String(this.players[0].id);
+      }
+      if (this.selectedPlayerId) {
+        const exists = this.players.some((player) => String(player.id) === String(this.selectedPlayerId));
+        if (!exists) {
+          this.selectedPlayerId = this.players.length ? String(this.players[0].id) : "";
+        }
+      }
+    },
+
+    async refreshTournaments() {
+      const data = await requestApi("/api/tournaments");
+      this.tournaments = Array.isArray(data.tournaments) ? data.tournaments.map(normalizeTournamentSummary) : [];
+
+      if (!this.selectedRecordTournamentId && this.tournaments.length) {
+        this.selectedRecordTournamentId = String(this.tournaments[0].id);
+      }
+      if (this.selectedRecordTournamentId) {
+        const exists = this.tournaments.some((tournament) => String(tournament.id) === String(this.selectedRecordTournamentId));
+        if (!exists) {
+          this.selectedRecordTournamentId = this.tournaments.length ? String(this.tournaments[0].id) : "";
+        }
+      }
+    },
+
+    async refreshOverview() {
+      const data = await requestApi("/api/stats/overview");
+      this.overview = normalizeOverview(data);
+    },
+
+    async refreshAdminPlayers() {
+      const data = await requestApi("/api/admin/players");
+      this.adminPlayers = Array.isArray(data.players) ? data.players.map(normalizeAdminPlayer) : [];
+
+      if (!this.selectedAdminPlayerId && this.adminPlayers.length) {
+        this.selectedAdminPlayerId = String(this.adminPlayers[0].id);
+      }
+      if (this.selectedAdminPlayerId) {
+        const exists = this.adminPlayers.some((player) => String(player.id) === String(this.selectedAdminPlayerId));
+        if (!exists) {
+          this.selectedAdminPlayerId = this.adminPlayers.length ? String(this.adminPlayers[0].id) : "";
+        }
+      }
+    },    async refreshAll(message = "전체 데이터를 동기화하는 중...") {
+      try {
+        await this.withLoading(message, async () => {
+          await this.checkHealth();
+          await Promise.all([
+            this.refreshBootstrap(),
+            this.refreshTournaments(),
+            this.refreshOverview(),
+            this.refreshAdminPlayers(),
+          ]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "데이터 동기화 실패", true);
+      }
+    },
+
+    runSimulator() {
+      try {
+        const type = this.forms.simType;
+        const rule = this.ruleMap.get(type) || DEFAULT_RULES[0];
+
+        const aElo = Number(this.forms.simAelo);
+        const bElo = Number(this.forms.simBelo);
+        const aScore = Number(this.forms.simAscore);
+        const bScore = Number(this.forms.simBscore);
+
+        if (!Number.isFinite(aElo) || aElo <= 0 || !Number.isFinite(bElo) || bElo <= 0) {
+          throw new Error("ELO는 1 이상의 숫자여야 합니다.");
+        }
+        if (!Number.isFinite(aScore) || !Number.isFinite(bScore) || aScore < 0 || bScore < 0 || aScore + bScore <= 0) {
+          throw new Error("점수는 음수가 아니어야 하며 합이 1 이상이어야 합니다.");
+        }
+
+        const resultA = aScore / (aScore + bScore);
+        const expA = expectedScore(aElo, bElo);
+        const expB = 1 - expA;
+
+        const deltaA = Math.round(Number(rule.kFactor) * (resultA - expA)) + Number(rule.basePoints);
+        const deltaB = Math.round(Number(rule.kFactor) * ((1 - resultA) - expB)) + Number(rule.basePoints);
+
+        this.simResult = {
+          deltaA,
+          deltaB,
+          expectedA: Math.round(expA * 100),
+          expectedB: Math.round(expB * 100),
+        };
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "시뮬레이션 실패", true);
+      }
+    },
+
+    async submitPlayer() {
+      const name = String(this.forms.playerName || "").trim();
+      if (!name) {
+        this.showToast("선수 이름을 입력하세요.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("선수를 등록하는 중...", async () => {
+          await requestApi("/api/players", "POST", { name });
+          this.forms.playerName = "";
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("선수를 등록했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "선수 등록 실패", true);
+      }
+    },
+
+    async submitTournament() {
+      const name = String(this.forms.tournamentName || "").trim();
+      if (!name) {
+        this.showToast("대회명을 입력하세요.", true);
+        return;
+      }
+
+      const participantIds = [...new Set(this.ui.participantIds.map((id) => toInt(id)).filter((id) => id > 0))];
+      if (participantIds.length < 2) {
+        this.showToast("참가자는 최소 2명 이상 선택해야 합니다.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("대회를 생성하는 중...", async () => {
+          await requestApi("/api/tournaments", "POST", {
+            name,
+            tournamentDate: this.forms.tournamentDate,
+            tournamentType: this.forms.tournamentType,
+            participantIds,
+          });
+
+          this.forms.tournamentName = "";
+          this.ui.participantIds = [];
+          this.ui.participantQuery = "";
+
+          await Promise.all([
+            this.refreshBootstrap(),
+            this.refreshTournaments(),
+            this.refreshOverview(),
+            this.refreshAdminPlayers(),
+          ]);
+          this.lastSyncedAt = new Date().toISOString();
+          this.activeTab = "tournament";
+        });
+        this.showToast("대회를 시작했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "대회 생성 실패", true);
+      }
+    },
+
+    buildMatchPayload() {
+      if (!this.openTournament) throw new Error("진행 중 대회가 없습니다.");
+
+      const matchFormat = this.forms.matchFormat === "DOUBLES" ? "DOUBLES" : "SINGLES";
+      const scoreA = toInt(this.forms.matchScoreA, -1);
+      const scoreB = toInt(this.forms.matchScoreB, -1);
+
+      if (scoreA < 0 || scoreB < 0 || scoreA + scoreB <= 0) {
+        throw new Error("점수는 0 이상이어야 하며 합이 1 이상이어야 합니다.");
+      }
+
+      const teamAPlayer1Id = toInt(this.forms.matchA1, -1);
+      const teamBPlayer1Id = toInt(this.forms.matchB1, -1);
+      if (teamAPlayer1Id <= 0 || teamBPlayer1Id <= 0) {
+        throw new Error("팀 A/B의 선수 1을 선택하세요.");
+      }
+
+      let teamAPlayer2Id = null;
+      let teamBPlayer2Id = null;
+      if (matchFormat === "DOUBLES") {
+        teamAPlayer2Id = toInt(this.forms.matchA2, -1);
+        teamBPlayer2Id = toInt(this.forms.matchB2, -1);
+        if (teamAPlayer2Id <= 0 || teamBPlayer2Id <= 0) {
+          throw new Error("복식은 팀별 선수 2를 모두 선택해야 합니다.");
+        }
+      }
+
+      const picked = [teamAPlayer1Id, teamAPlayer2Id, teamBPlayer1Id, teamBPlayer2Id].filter((id) => id != null);
+      const unique = new Set(picked);
+      if (unique.size !== picked.length) {
+        throw new Error("한 경기에서 동일 선수를 중복 선택할 수 없습니다.");
+      }
+
+      return {
+        matchFormat,
+        teamAPlayer1Id,
+        teamAPlayer2Id,
+        teamBPlayer1Id,
+        teamBPlayer2Id,
+        scoreA,
+        scoreB,
+      };
+    },
+
+    async submitMatch() {
+      try {
+        const payload = this.buildMatchPayload();
+        await this.withLoading("경기 결과를 저장하는 중...", async () => {
+          await requestApi(`/api/tournaments/${this.openTournament.id}/matches`, "POST", payload);
+          await this.refreshBootstrap();
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("경기 결과를 기록했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "경기 기록 실패", true);
+      }
+    },
+
+    async deleteMatch(matchId) {
+      if (!this.openTournament) return;
+      if (!window.confirm("이 경기를 삭제할까요?")) return;
+
+      try {
+        await this.withLoading("경기를 삭제하는 중...", async () => {
+          await requestApi(`/api/tournaments/${this.openTournament.id}/matches/${matchId}`, "DELETE");
+          await this.refreshBootstrap();
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("경기를 삭제했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "경기 삭제 실패", true);
+      }
+    },
+
+    async finalizeTournament() {
+      if (!this.openTournament) return;
+      if (!window.confirm("대회를 종료하고 ELO를 반영할까요?")) return;
+
+      try {
+        await this.withLoading("대회를 종료하는 중...", async () => {
+          await requestApi(`/api/tournaments/${this.openTournament.id}/finalize`, "POST");
+          await Promise.all([
+            this.refreshBootstrap(),
+            this.refreshTournaments(),
+            this.refreshOverview(),
+            this.refreshAdminPlayers(),
+          ]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("대회를 종료하고 점수를 반영했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "대회 종료 실패", true);
+      }
+    },
+
+    async cancelTournament() {
+      if (!this.openTournament) return;
+      if (!window.confirm("진행 중인 대회를 취소할까요?")) return;
+
+      try {
+        await this.withLoading("대회를 취소하는 중...", async () => {
+          await requestApi(`/api/tournaments/${this.openTournament.id}/cancel`, "POST");
+          await Promise.all([
+            this.refreshBootstrap(),
+            this.refreshTournaments(),
+            this.refreshOverview(),
+            this.refreshAdminPlayers(),
+          ]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("대회를 취소했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "대회 취소 실패", true);
+      }
+    },
+
+    async loadRecordBySelection() {
+      const tournamentId = toInt(this.selectedRecordTournamentId);
+      if (tournamentId <= 0) {
+        this.recordTournament = null;
+        return;
+      }
+
+      try {
+        await this.withLoading("대회 기록을 불러오는 중...", async () => {
+          const data = await requestApi(`/api/tournaments/${tournamentId}/report`);
+          this.recordTournament = normalizeTournamentDetail(data.tournament);
+        });
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "대회 기록 조회 실패", true);
+      }
+    },
+
+    async loadPlayerBySelection() {
+      const playerId = toInt(this.selectedPlayerId);
+      if (playerId <= 0) {
+        this.playerStats = null;
+        return;
+      }
+
+      try {
+        await this.withLoading("선수 기록을 불러오는 중...", async () => {
+          const data = await requestApi(`/api/players/${playerId}/stats`);
+          this.playerStats = {
+            player: normalizePlayer(data.player),
+            summary: {
+              total: toInt(data.summary?.total),
+              wins: toInt(data.summary?.wins),
+              losses: toInt(data.summary?.losses),
+              draws: toInt(data.summary?.draws),
+              winRate: toInt(data.summary?.winRate),
+              singlesTotal: toInt(data.summary?.singlesTotal),
+              singlesWins: toInt(data.summary?.singlesWins),
+              singlesWinRate: toInt(data.summary?.singlesWinRate),
+              doublesTotal: toInt(data.summary?.doublesTotal),
+              doublesWins: toInt(data.summary?.doublesWins),
+              doublesWinRate: toInt(data.summary?.doublesWinRate),
+            },
+            events: Array.isArray(data.events)
+              ? data.events.map((event) => ({
+                  id: toInt(event.id),
+                  eventType: event.eventType || "",
+                  eventDate: event.eventDate || "",
+                  kFactor: toInt(event.kFactor),
+                  basePoints: toInt(event.basePoints),
+                  eloBefore: toInt(event.eloBefore),
+                  delta: toInt(event.delta),
+                  eloAfter: toInt(event.eloAfter),
+                }))
+              : [],
+            matches: Array.isArray(data.matches) ? data.matches.map(normalizeMatch) : [],
+            opponents: Array.isArray(data.opponents)
+              ? data.opponents.map((op) => ({
+                  opponent: op.opponent || "",
+                  matches: toInt(op.matches),
+                  wins: toInt(op.wins),
+                  losses: toInt(op.losses),
+                  draws: toInt(op.draws),
+                }))
+              : [],
+          };
+        });
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "선수 기록 조회 실패", true);
+      }
+    },
+
+    async refreshStats() {
+      try {
+        await this.withLoading("통계를 갱신하는 중...", async () => {
+          await this.refreshOverview();
+          this.lastSyncedAt = new Date().toISOString();
+        });
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "통계 갱신 실패", true);
+      }
+    },
+
+    async saveRule(tournamentType) {
+      const draft = this.ruleDrafts[tournamentType];
+      if (!draft) return;
+
+      const kFactor = toInt(draft.kFactor, -1);
+      const basePoints = toInt(draft.basePoints, -1);
+      if (kFactor < 0 || basePoints < 0) {
+        this.showToast("K값과 base 점수는 0 이상이어야 합니다.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("대회 규칙을 저장하는 중...", async () => {
+          const data = await requestApi(`/api/settings/tournament-rules/${tournamentType}`, "PATCH", {
+            kFactor,
+            basePoints,
+          });
+          this.applyRuleList(data.tournamentRules);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("규칙을 저장했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "규칙 저장 실패", true);
+      }
+    },
+
+    async renameAdminPlayer() {
+      if (!this.selectedAdminPlayer) {
+        this.showToast("관리할 선수를 선택하세요.", true);
+        return;
+      }
+      const name = String(this.forms.adminRename || "").trim();
+      if (!name) {
+        this.showToast("변경할 이름을 입력하세요.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("선수 이름을 변경하는 중...", async () => {
+          await requestApi(`/api/admin/players/${this.selectedAdminPlayer.id}`, "PATCH", { name });
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("선수 이름을 변경했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "이름 변경 실패", true);
+      }
+    },
+
+    async adjustAdminElo() {
+      if (!this.selectedAdminPlayer) {
+        this.showToast("관리할 선수를 선택하세요.", true);
+        return;
+      }
+      if (this.forms.adminElo == null || this.forms.adminElo === "") {
+        this.showToast("조정할 ELO를 입력하세요.", true);
+        return;
+      }
+      const currentElo = toInt(this.forms.adminElo, -1);
+      if (currentElo < 0) {
+        this.showToast("조정할 ELO를 입력하세요.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("ELO를 조정하는 중...", async () => {
+          await requestApi(`/api/admin/players/${this.selectedAdminPlayer.id}`, "PATCH", { currentElo });
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("선수 ELO를 조정했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "ELO 조정 실패", true);
+      }
+    },
+
+    async deleteAdminPlayer() {
+      if (!this.selectedAdminPlayer) {
+        this.showToast("관리할 선수를 선택하세요.", true);
+        return;
+      }
+      if (!window.confirm("선수를 비활성화할까요?")) return;
+
+      try {
+        await this.withLoading("선수를 비활성화하는 중...", async () => {
+          await requestApi(`/api/admin/players/${this.selectedAdminPlayer.id}`, "DELETE");
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("선수를 비활성화했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "선수 삭제 실패", true);
+      }
+    },
+  },
+
+  watch: {
+    openTournament: {
+      handler() {
+        this.syncMatchSelectDefaults();
+      },
+      deep: false,
+    },
+
+    players: {
+      handler() {
+        this.syncParticipantSelection();
+      },
+      deep: true,
+    },
+
+    "forms.matchFormat"(value) {
+      if (value === "SINGLES") {
+        this.forms.matchA2 = "";
+        this.forms.matchB2 = "";
+      }
+      this.syncMatchSelectDefaults();
+    },
+
+    selectedAdminPlayer: {
+      handler(player) {
+        this.forms.adminRename = player?.name || "";
+        this.forms.adminElo = player ? toInt(player.currentElo) : null;
+      },
+      immediate: true,
+    },
+  },
+
+  async mounted() {
+    await this.refreshAll("초기 데이터를 불러오는 중...");
+  },
+  template: `
+    <div class="app-root">
+      <div class="bg-orb orb-a"></div>
+      <div class="bg-orb orb-b"></div>
+      <div class="bg-orb orb-c"></div>
+
+      <div class="layout-shell">
+        <aside class="side-nav">
+          <div class="brand-panel">
+            <p class="brand-overline">ELO RANKING SYSTEM</p>
+            <h1>ELO Ops Studio</h1>
+            <p>Cloudflare Pages + D1 기반 운영 콘솔</p>
+          </div>
+
+          <nav class="tab-nav" aria-label="주요 메뉴">
+            <button
+              v-for="item in tabs"
+              :key="item.id"
+              type="button"
+              class="tab-btn"
+              :class="{ active: activeTab === item.id }"
+              @click="activeTab = item.id"
+            >
+              <span class="tab-label">{{ item.label }}</span>
+              <small>{{ item.desc }}</small>
+            </button>
+          </nav>
+
+          <div class="side-foot">
+            <p>저장소: Cloudflare D1</p>
+            <p>런타임: Pages Functions</p>
+          </div>
+        </aside>
+
+        <div class="workspace">
+          <header class="workspace-head">
+            <div class="head-copy">
+              <h2>경기 운영 대시보드</h2>
+              <p>선수 등록부터 대회 종료 반영까지 한 흐름으로 관리합니다.</p>
+            </div>
+            <div class="head-actions">
+              <button type="button" class="btn ghost" @click="refreshAll('전체 데이터를 동기화하는 중...')">전체 동기화</button>
+              <div class="sync-text">마지막 동기화: {{ formatDateTime(lastSyncedAt, true) }}</div>
+              <div class="health-pill" :class="{ ok: health.ok === true, bad: health.ok === false }">{{ health.text }}</div>
+            </div>
+          </header>
+
+          <section class="kpi-grid" aria-label="핵심 지표">
+            <article v-for="metric in quickMetrics" :key="metric.label" class="kpi-card">
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.value }}</strong>
+              <small>{{ metric.help }}</small>
+            </article>
+          </section>
+
+          <main class="panel-stack">
+            <section v-show="activeTab === 'dashboard'" class="panel-group">
+              <div class="panel-grid two">
+                <article class="surface accent">
+                  <h3>선수 등록</h3>
+                  <p class="muted">신규 선수는 활성 선수 평균 ELO를 기준으로 자동 초기화됩니다.</p>
+                  <form class="inline-form" @submit.prevent="submitPlayer">
+                    <input v-model.trim="forms.playerName" placeholder="선수 이름" required />
+                    <button type="submit" class="btn primary">등록</button>
+                  </form>
+                </article>
+
+                <article class="surface">
+                  <h3>ELO 시뮬레이터</h3>
+                  <form class="sim-grid" @submit.prevent="runSimulator">
+                    <label>대회 타입
+                      <select v-model="forms.simType">
+                        <option v-for="rule in activeRules" :key="rule.tournamentType" :value="rule.tournamentType">{{ rule.displayName }}</option>
+                      </select>
+                    </label>
+                    <label>Player A ELO<input v-model.number="forms.simAelo" type="number" min="1" /></label>
+                    <label>Player B ELO<input v-model.number="forms.simBelo" type="number" min="1" /></label>
+                    <label>Score A<input v-model.number="forms.simAscore" type="number" min="0" /></label>
+                    <label>Score B<input v-model.number="forms.simBscore" type="number" min="0" /></label>
+                    <button type="submit" class="btn primary">계산</button>
+                  </form>
+
+                  <div v-if="simResult" class="sim-result">
+                    <div class="sim-pill up">A {{ formatSigned(simResult.deltaA) }}</div>
+                    <div class="sim-pill down">B {{ formatSigned(simResult.deltaB) }}</div>
+                    <small>예상승률 A {{ simResult.expectedA }}% · B {{ simResult.expectedB }}%</small>
+                  </div>
+                </article>
+              </div>
+
+              <div class="panel-grid two">
+                <article class="surface">
+                  <header class="surface-head">
+                    <h3>현재 랭킹</h3>
+                    <input v-model.trim="ui.rankingQuery" placeholder="선수 이름 검색" />
+                  </header>
+                  <div class="table-shell">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>순위</th>
+                          <th>선수</th>
+                          <th>ELO / 점수</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="player in filteredRankingPlayers" :key="'rank-' + player.id">
+                          <td>#{{ player.rank }}</td>
+                          <td>{{ player.name }}</td>
+                          <td>
+                            <div class="elo-cell">
+                              <strong>{{ formatNum(player.currentElo) }}</strong>
+                              <small>ELO</small>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr v-if="!filteredRankingPlayers.length">
+                          <td colspan="3" class="empty-row">표시할 선수가 없습니다.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+
+                <article class="surface">
+                  <header class="surface-head">
+                    <h3>최근 경기</h3>
+                    <select v-model="ui.recentFormat">
+                      <option value="ALL">전체</option>
+                      <option value="SINGLES">단식</option>
+                      <option value="DOUBLES">복식</option>
+                    </select>
+                  </header>
+
+                  <div class="card-list">
+                    <match-card
+                      v-for="match in filteredRecentMatches"
+                      :key="'recent-' + match.matchId"
+                      :match="match"
+                      :type-label="tournamentTypeLabel(match.tournamentType)"
+                    />
+                    <p v-if="!filteredRecentMatches.length" class="empty-copy">최근 경기 데이터가 없습니다.</p>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section v-show="activeTab === 'tournament'" class="panel-group">
+              <div class="panel-grid two">
+                <article class="surface">
+                  <h3>새 대회 시작</h3>
+                  <form class="stack-form" @submit.prevent="submitTournament">
+                    <label>대회명<input v-model.trim="forms.tournamentName" required /></label>
+                    <label>대회일자<input v-model="forms.tournamentDate" type="date" required /></label>
+                    <label>대회종류
+                      <select v-model="forms.tournamentType">
+                        <option v-for="rule in activeRules" :key="'rule-start-' + rule.tournamentType" :value="rule.tournamentType">{{ rule.displayName }}</option>
+                      </select>
+                    </label>
+
+                    <div class="participant-box">
+                      <div class="participant-head">
+                        <span>참가자 선택</span>
+                        <strong>{{ selectedParticipants.length }}명 선택</strong>
+                      </div>
+
+                      <input
+                        v-model.trim="ui.participantQuery"
+                        placeholder="선수 검색 후 Enter로 첫 결과 추가"
+                        @keydown.enter.prevent="addFirstSearchedParticipant"
+                      />
+
+                      <div class="picker-actions">
+                        <button type="button" class="btn ghost mini" @click="selectAllParticipants">전체 선택</button>
+                        <button type="button" class="btn ghost mini" @click="selectTopParticipants(8)">상위 8명</button>
+                        <button type="button" class="btn ghost mini" @click="clearParticipantSelection">선택 초기화</button>
+                      </div>
+
+                      <div class="selected-chip-wrap">
+                        <button
+                          v-for="player in selectedParticipants"
+                          :key="'picked-' + player.id"
+                          type="button"
+                          class="selected-chip"
+                          @click="toggleParticipant(player.id)"
+                        >
+                          {{ player.name }}
+                        </button>
+                        <p v-if="!selectedParticipants.length" class="empty-copy">아직 선택된 참가자가 없습니다.</p>
+                      </div>
+
+                      <div class="pick-grid">
+                        <button
+                          v-for="player in filteredParticipantPool"
+                          :key="'pool-' + player.id"
+                          type="button"
+                          class="pick-item"
+                          :class="{ selected: isParticipantSelected(player.id) }"
+                          @click="toggleParticipant(player.id)"
+                        >
+                          <span>{{ player.name }}</span>
+                          <small>{{ formatNum(player.currentElo) }}</small>
+                        </button>
+                      </div>
+                    </div>
+
+                    <button type="submit" class="btn primary">대회 시작</button>
+                  </form>
+                </article>
+
+                <article class="surface">
+                  <h3>진행 중 대회</h3>
+                  <div v-if="openTournament" class="open-summary">
+                    <p class="open-title">{{ openTournament.name }}</p>
+                    <div class="summary-row">
+                      <span>{{ openTournament.tournamentDate }}</span>
+                      <span>{{ tournamentTypeLabel(openTournament.tournamentType) }}</span>
+                      <span class="status-chip open">{{ tournamentStatusLabel(openTournament.status) }}</span>
+                    </div>
+                    <div class="summary-stat-grid">
+                      <div><strong>{{ openTournament.participants.length }}</strong><small>참가자</small></div>
+                      <div><strong>{{ openTournament.matches.length }}</strong><small>경기</small></div>
+                      <div><strong>K {{ openTournament.kFactor }}</strong><small>base {{ openTournament.basePoints }}</small></div>
+                    </div>
+                  </div>
+                  <p v-else class="empty-copy">진행 중 대회가 없습니다.</p>
+                </article>
+              </div>
+
+              <article class="surface">
+                <h3>경기 기록</h3>
+                <div v-if="openTournament">
+                  <div class="format-switch">
+                    <span>형식</span>
+                    <div class="switch-toggle">
+                      <button type="button" :class="{ active: forms.matchFormat === 'SINGLES' }" @click="setMatchFormat('SINGLES')">단식</button>
+                      <button type="button" :class="{ active: forms.matchFormat === 'DOUBLES' }" @click="setMatchFormat('DOUBLES')">복식</button>
+                    </div>
+                  </div>
+
+                  <form class="match-entry-grid" @submit.prevent="submitMatch">
+                    <section class="team-entry team-a">
+                      <h4>팀 A</h4>
+                      <label>선수 1
+                        <select v-model="forms.matchA1">
+                          <option value="">선수 선택</option>
+                          <option v-for="player in openTournamentParticipants" :key="'match-a1-' + player.playerId" :value="String(player.playerId)">
+                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                          </option>
+                        </select>
+                      </label>
+                      <label v-if="forms.matchFormat === 'DOUBLES'">선수 2
+                        <select v-model="forms.matchA2">
+                          <option value="">선수 선택</option>
+                          <option v-for="player in openTournamentParticipants" :key="'match-a2-' + player.playerId" :value="String(player.playerId)">
+                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                          </option>
+                        </select>
+                      </label>
+                      <label class="score-field">점수
+                        <input v-model.number="forms.matchScoreA" type="number" min="0" />
+                      </label>
+                    </section>
+
+                    <section class="team-entry team-b">
+                      <h4>팀 B</h4>
+                      <label>선수 1
+                        <select v-model="forms.matchB1">
+                          <option value="">선수 선택</option>
+                          <option v-for="player in openTournamentParticipants" :key="'match-b1-' + player.playerId" :value="String(player.playerId)">
+                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                          </option>
+                        </select>
+                      </label>
+                      <label v-if="forms.matchFormat === 'DOUBLES'">선수 2
+                        <select v-model="forms.matchB2">
+                          <option value="">선수 선택</option>
+                          <option v-for="player in openTournamentParticipants" :key="'match-b2-' + player.playerId" :value="String(player.playerId)">
+                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                          </option>
+                        </select>
+                      </label>
+                      <label class="score-field">점수
+                        <input v-model.number="forms.matchScoreB" type="number" min="0" />
+                      </label>
+                    </section>
+
+                    <button type="submit" class="btn primary wide">경기 추가</button>
+                  </form>
+                </div>
+                <p v-else class="empty-copy">진행 중 대회가 있어야 경기 기록이 가능합니다.</p>
+              </article>
+
+              <div class="panel-grid two">
+                <article class="surface">
+                  <h3>참가자 / 예상 ELO</h3>
+                  <div class="table-shell">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>시드</th>
+                          <th>선수</th>
+                          <th>시작 ELO</th>
+                          <th>누적 Δ</th>
+                          <th>예상 ELO</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="player in openTournamentParticipants" :key="'open-player-' + player.playerId">
+                          <td>#{{ player.seedRank }}</td>
+                          <td>{{ player.name }}</td>
+                          <td>{{ formatNum(player.seedElo) }}</td>
+                          <td :class="{ up: player.pendingDelta > 0, down: player.pendingDelta < 0 }">{{ formatSigned(player.pendingDelta) }}</td>
+                          <td>
+                            <div class="elo-cell">
+                              <strong>{{ formatNum(player.projectedElo) }}</strong>
+                              <small>ELO</small>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr v-if="!openTournamentParticipants.length">
+                          <td colspan="5" class="empty-row">참가자 정보가 없습니다.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+
+                <article class="surface">
+                  <h3>경기 목록</h3>
+                  <div class="card-list">
+                    <match-card
+                      v-for="match in openTournamentMatches"
+                      :key="'open-match-' + match.id"
+                      :match="match"
+                      :show-meta="false"
+                      :deletable="true"
+                      @delete="deleteMatch(match.id)"
+                    />
+                    <p v-if="!openTournamentMatches.length" class="empty-copy">아직 기록된 경기가 없습니다.</p>
+                  </div>
+
+                  <div class="action-row">
+                    <button type="button" class="btn danger" :disabled="!openTournament" @click="cancelTournament">대회 취소</button>
+                    <button type="button" class="btn primary" :disabled="!openTournament" @click="finalizeTournament">대회 종료</button>
+                  </div>
+                </article>
+              </div>
+            </section>            <section v-show="activeTab === 'records'" class="panel-group">
+              <article class="surface">
+                <header class="surface-head">
+                  <h3>대회 기록</h3>
+                  <div class="inline-form">
+                    <select v-model="selectedRecordTournamentId">
+                      <option v-for="tournament in recordTournamentOptions" :key="'record-select-' + tournament.id" :value="String(tournament.id)">
+                        {{ tournament.tournamentDate }} · {{ tournament.name }} ({{ tournamentStatusLabel(tournament.status) }})
+                      </option>
+                    </select>
+                    <button type="button" class="btn primary" @click="loadRecordBySelection">불러오기</button>
+                  </div>
+                </header>
+
+                <div v-if="recordTournament" class="record-overview">
+                  <div class="summary-row">
+                    <strong>{{ recordTournament.name }}</strong>
+                    <span>{{ recordTournament.tournamentDate }}</span>
+                    <span>{{ tournamentTypeLabel(recordTournament.tournamentType) }}</span>
+                    <span class="status-chip" :class="statusClass(recordTournament.status)">{{ tournamentStatusLabel(recordTournament.status) }}</span>
+                  </div>
+                  <div class="summary-stat-grid">
+                    <div><strong>{{ recordTournament.participants.length }}</strong><small>참가자</small></div>
+                    <div><strong>{{ recordTournament.matches.length }}</strong><small>경기수</small></div>
+                    <div><strong>K {{ recordTournament.kFactor }}</strong><small>base {{ recordTournament.basePoints }}</small></div>
+                  </div>
+                </div>
+                <p v-else class="empty-copy">조회할 대회를 선택하세요.</p>
+              </article>
+
+              <div v-if="recordTournament" class="panel-grid two">
+                <article class="surface">
+                  <h3>최종 반영 점수</h3>
+                  <div class="table-shell">
+                    <table class="data-table">
+                      <thead>
+                        <tr><th>선수</th><th>ELO 변동</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="event in recordTournament.ratingEvents" :key="'rating-' + event.playerId">
+                          <td>{{ event.name }}</td>
+                          <td>
+                            <div class="elo-result-cell">
+                              <span>{{ formatNum(event.eloBefore) }}</span>
+                              <span :class="{ up: event.delta > 0, down: event.delta < 0 }">{{ formatSigned(event.delta) }}</span>
+                              <strong>{{ formatNum(event.eloAfter) }}</strong>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr v-if="!recordTournament.ratingEvents.length">
+                          <td colspan="2" class="empty-row">점수 반영 데이터가 없습니다.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+
+                <article class="surface">
+                  <h3>단식 스케줄 매트릭스</h3>
+                  <div class="table-shell">
+                    <table class="data-table matrix">
+                      <thead>
+                        <tr>
+                          <th>선수</th>
+                          <th v-for="name in recordMatrixPlayers" :key="'matrix-head-' + name">{{ name }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="row in recordMatrixRows" :key="'matrix-row-' + row.name">
+                          <th>{{ row.name }}</th>
+                          <td v-for="cell in row.cells" :key="'matrix-cell-' + row.name + '-' + cell.key">{{ cell.value || '-' }}</td>
+                        </tr>
+                        <tr v-if="!recordMatrixRows.length">
+                          <td colspan="99" class="empty-row">단식 매트릭스 데이터가 없습니다.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              </div>
+
+              <article v-if="recordTournament" class="surface">
+                <h3>경기 결과</h3>
+                <div class="card-list">
+                  <match-card
+                    v-for="match in recordTournament.matches"
+                    :key="'record-match-' + match.id"
+                    :match="match"
+                    :show-meta="false"
+                  />
+                  <p v-if="!recordTournament.matches.length" class="empty-copy">기록된 경기가 없습니다.</p>
+                </div>
+              </article>
+            </section>
+
+            <section v-show="activeTab === 'player'" class="panel-group">
+              <article class="surface">
+                <header class="surface-head">
+                  <h3>선수별 기록</h3>
+                  <div class="inline-form">
+                    <select v-model="selectedPlayerId">
+                      <option v-for="player in players" :key="'player-select-' + player.id" :value="String(player.id)">{{ player.name }}</option>
+                    </select>
+                    <button type="button" class="btn primary" @click="loadPlayerBySelection">조회</button>
+                  </div>
+                </header>
+              </article>
+
+              <article v-if="playerStats" class="surface">
+                <h3>{{ playerStats.player.name }} 기록 요약</h3>
+                <div class="summary-stat-grid player-summary">
+                  <div><strong>{{ formatNum(playerStats.player.currentElo) }}</strong><small>ELO</small></div>
+                  <div><strong>#{{ playerStats.player.rank }}</strong><small>현재 순위</small></div>
+                  <div><strong>{{ playerStats.summary.wins }}승 {{ playerStats.summary.losses }}패</strong><small>전체 전적</small></div>
+                  <div><strong>{{ playerStats.summary.winRate }}%</strong><small>전체 승률</small></div>
+                  <div><strong>{{ playerStats.summary.singlesWinRate }}%</strong><small>단식 승률</small></div>
+                  <div><strong>{{ playerStats.summary.doublesWinRate }}%</strong><small>복식 승률</small></div>
+                </div>
+              </article>
+
+              <div v-if="playerStats" class="panel-grid two">
+                <article class="surface">
+                  <h3>경기 기록</h3>
+                  <div class="card-list">
+                    <match-card
+                      v-for="match in playerMatchCards"
+                      :key="'player-match-' + match.matchId"
+                      :match="match"
+                    />
+                    <p v-if="!playerMatchCards.length" class="empty-copy">경기 데이터가 없습니다.</p>
+                  </div>
+                </article>
+
+                <article class="surface">
+                  <h3>상대 전적(단식)</h3>
+                  <div class="table-shell">
+                    <table class="data-table">
+                      <thead>
+                        <tr><th>상대</th><th>경기</th><th>승-패-무</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="opponent in playerStats.opponents" :key="'opponent-' + opponent.opponent">
+                          <td>{{ opponent.opponent }}</td>
+                          <td>{{ opponent.matches }}</td>
+                          <td>{{ opponent.wins }}-{{ opponent.losses }}-{{ opponent.draws }}</td>
+                        </tr>
+                        <tr v-if="!playerStats.opponents.length">
+                          <td colspan="3" class="empty-row">상대 전적 데이터가 없습니다.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              </div>
+
+              <article v-if="playerStats" class="surface">
+                <h3>ELO 이력</h3>
+                <div class="table-shell">
+                  <table class="data-table">
+                    <thead>
+                      <tr><th>날짜</th><th>유형</th><th>K / base</th><th>점수 변동</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="event in playerStats.events" :key="'event-' + event.id">
+                        <td>{{ event.eventDate }}</td>
+                        <td>{{ event.eventType }}</td>
+                        <td>{{ event.kFactor }} / {{ event.basePoints }}</td>
+                        <td>
+                          <div class="elo-result-cell">
+                            <span>{{ formatNum(event.eloBefore) }}</span>
+                            <span :class="{ up: event.delta > 0, down: event.delta < 0 }">{{ formatSigned(event.delta) }}</span>
+                            <strong>{{ formatNum(event.eloAfter) }}</strong>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr v-if="!playerStats.events.length">
+                        <td colspan="4" class="empty-row">ELO 이벤트가 없습니다.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+
+            <section v-show="activeTab === 'stats'" class="panel-group">
+              <article class="surface">
+                <header class="surface-head">
+                  <h3>전체 통계</h3>
+                  <button type="button" class="btn ghost" @click="refreshStats">새로고침</button>
+                </header>
+                <div v-if="overview" class="summary-stat-grid">
+                  <div><strong>{{ overview.summary.players }}</strong><small>활성 선수</small></div>
+                  <div><strong>{{ overview.summary.finalizedTournaments }}</strong><small>종료 대회</small></div>
+                  <div><strong>{{ overview.summary.openTournaments }}</strong><small>진행중 대회</small></div>
+                  <div><strong>{{ overview.summary.finalizedMatches }}</strong><small>종료 경기</small></div>
+                  <div><strong>{{ formatNum(overview.summary.avgElo) }}</strong><small>평균 ELO</small></div>
+                </div>
+              </article>
+
+              <div class="panel-grid two" v-if="overview">
+                <article class="surface">
+                  <h3>상위 랭킹</h3>
+                  <div class="table-shell">
+                    <table class="data-table">
+                      <thead>
+                        <tr><th>순위</th><th>선수</th><th>ELO</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="player in overview.topPlayers.slice(0, 20)" :key="'top-' + player.id">
+                          <td>#{{ player.rank }}</td>
+                          <td>{{ player.name }}</td>
+                          <td>{{ formatNum(player.currentElo) }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+
+                <article class="surface">
+                  <h3>최근 대회</h3>
+                  <div class="table-shell">
+                    <table class="data-table">
+                      <thead>
+                        <tr><th>일자</th><th>대회명</th><th>타입</th><th>상태</th><th>경기</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="tournament in overview.recentTournaments" :key="'recent-tour-' + tournament.id">
+                          <td>{{ tournament.tournamentDate }}</td>
+                          <td>{{ tournament.name }}</td>
+                          <td>{{ tournamentTypeLabel(tournament.tournamentType) }}</td>
+                          <td>{{ tournamentStatusLabel(tournament.status) }}</td>
+                          <td>{{ tournament.matchCount }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              </div>
+
+              <article class="surface" v-if="overview">
+                <h3>ELO 분포</h3>
+                <div class="histogram">
+                  <div v-for="row in histogramRows" :key="'hist-' + row.range" class="hist-row">
+                    <label>{{ row.range }}</label>
+                    <div class="bar-track"><span class="bar-fill" :style="{ width: row.ratio + '%' }"></span></div>
+                    <strong>{{ row.count }}</strong>
+                  </div>
+                </div>
+              </article>
+            </section>            <section v-show="activeTab === 'admin'" class="panel-group">
+              <div class="panel-grid two">
+                <article class="surface">
+                  <h3>대회 타입 점수 규칙</h3>
+                  <p class="muted">정규 대회 / 상시 대회 / 친선전의 K 값과 base 점수를 조정합니다.</p>
+                  <div class="rule-grid">
+                    <div v-for="rule in activeRules" :key="'admin-rule-' + rule.tournamentType" class="rule-card">
+                      <strong>{{ rule.displayName }}</strong>
+                      <label>K Factor
+                        <input v-model.number="ruleDrafts[rule.tournamentType].kFactor" type="number" min="0" />
+                      </label>
+                      <label>Base Points
+                        <input v-model.number="ruleDrafts[rule.tournamentType].basePoints" type="number" min="0" />
+                      </label>
+                      <button type="button" class="btn primary mini" @click="saveRule(rule.tournamentType)">저장</button>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="surface">
+                  <h3>선수 관리</h3>
+                  <div class="stack-form">
+                    <label>관리 대상
+                      <select v-model="selectedAdminPlayerId">
+                        <option v-for="player in adminPlayers" :key="'admin-select-' + player.id" :value="String(player.id)">
+                          {{ player.name }} ({{ player.isActive ? '활성' : '비활성' }})
+                        </option>
+                      </select>
+                    </label>
+
+                    <div v-if="selectedAdminPlayer" class="admin-meta">
+                      <strong>{{ selectedAdminPlayer.name }}</strong>
+                      <span>ELO {{ formatNum(selectedAdminPlayer.currentElo) }}</span>
+                      <span>상태: {{ selectedAdminPlayer.isActive ? '활성' : '비활성' }}</span>
+                    </div>
+
+                    <form class="inline-form" @submit.prevent="renameAdminPlayer">
+                      <input v-model.trim="forms.adminRename" placeholder="새 선수 이름" />
+                      <button type="submit" class="btn primary">이름 변경</button>
+                    </form>
+
+                    <form class="inline-form" @submit.prevent="adjustAdminElo">
+                      <input v-model.number="forms.adminElo" type="number" min="0" placeholder="새 ELO" />
+                      <button type="submit" class="btn ghost">점수 조정</button>
+                    </form>
+
+                    <button type="button" class="btn danger" @click="deleteAdminPlayer">선수 삭제(비활성화)</button>
+                  </div>
+                </article>
+              </div>
+
+              <article class="surface">
+                <header class="surface-head">
+                  <h3>선수 현황</h3>
+                  <div class="inline-form">
+                    <input v-model.trim="ui.adminQuery" placeholder="선수 이름 검색" />
+                    <select v-model="ui.adminStatus">
+                      <option value="ALL">전체 상태</option>
+                      <option value="ACTIVE">활성</option>
+                      <option value="INACTIVE">비활성</option>
+                    </select>
+                  </div>
+                </header>
+
+                <div class="table-shell">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>선수</th>
+                        <th>ELO / 점수</th>
+                        <th>상태</th>
+                        <th>진행중 대회</th>
+                        <th>누적 경기</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="player in filteredAdminPlayers" :key="'admin-table-' + player.id">
+                        <td>{{ player.name }}</td>
+                        <td>
+                          <div class="elo-cell">
+                            <strong>{{ formatNum(player.currentElo) }}</strong>
+                            <small>ELO</small>
+                          </div>
+                        </td>
+                        <td>
+                          <span class="status-chip" :class="player.isActive ? 'active' : 'inactive'">{{ player.isActive ? '활성' : '비활성' }}</span>
+                        </td>
+                        <td>{{ player.inOpenTournament ? '예' : '아니오' }}</td>
+                        <td>{{ player.matchCount }}</td>
+                      </tr>
+                      <tr v-if="!filteredAdminPlayers.length">
+                        <td colspan="5" class="empty-row">검색 결과가 없습니다.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+          </main>
+        </div>
+      </div>
+
+      <div class="loading-overlay" :class="{ show: isLoading }" role="status" aria-live="polite" :aria-hidden="!isLoading">
+        <div class="loading-card">
+          <div class="spinner" aria-hidden="true"></div>
+          <strong>{{ loading.message }}</strong>
+          <p>잠시만 기다려주세요.</p>
+        </div>
+      </div>
+
+      <div class="toast" :class="{ show: toast.visible, error: toast.error }">{{ toast.message }}</div>
     </div>
-  `;
-}
-
-function renderPlayerStats() {
-  const root = q("#playerContent");
-  q("#playerSelect").innerHTML = state.players.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
-
-  if (!state.playerStats) {
-    root.innerHTML = '<article class="card"><p class="muted">선수를 선택해 조회하세요.</p></article>';
-    return;
-  }
-
-  const s = state.playerStats;
-  const matches = s.matches.map((m) => `
-    <tr>
-      <td>${m.tournamentDate}</td><td>${m.tournamentName}</td><td>${matchFormatLabel(m.matchFormat)}</td>
-      <td>${m.myTeamName}</td><td>${m.myScore}:${m.opponentScore}</td><td>${m.opponentTeamName}</td>
-      <td><span class="badge ${m.result.toLowerCase()}">${m.result}</span></td>
-    </tr>
-  `).join("");
-
-  const events = s.events.map((e) => `
-    <tr><td>${e.eventDate}</td><td>${e.eventType}</td><td class="num-col">${formatNum(e.eloBefore)}</td><td class="num-col">${formatSigned(e.delta)}</td><td class="num-col">${formatNum(e.eloAfter)}</td></tr>
-  `).join("");
-
-  const opponents = s.opponents.map((o) => `<tr><td>${o.opponent}</td><td>${o.matches}</td><td>${o.wins}</td><td>${o.losses}</td><td>${o.draws}</td></tr>`).join("");
-
-  root.innerHTML = `
-    <article class="card">
-      <h2>${s.player.name}</h2>
-      <p class="muted">현재 ELO ${formatNum(s.player.currentElo)} · ${s.player.rank}위</p>
-      <p>전체 ${s.summary.total}전 ${s.summary.wins}승 ${s.summary.losses}패 ${s.summary.draws}무 (${s.summary.winRate}%)</p>
-      <p class="muted">단식 ${s.summary.singlesWinRate}% · 복식 ${s.summary.doublesWinRate}%</p>
-    </article>
-    <div class="grid two">
-      <article class="card">
-        <h3>경기 기록</h3>
-        ${tableWrap(`<table class="table"><thead><tr><th>날짜</th><th>대회</th><th>형식</th><th>내 팀</th><th>스코어</th><th>상대</th><th>결과</th></tr></thead><tbody>${matches}</tbody></table>`)}
-      </article>
-      <article class="card">
-        <h3>ELO 이력</h3>
-        ${tableWrap(`<table class="table"><thead><tr><th>날짜</th><th>타입</th><th>Before</th><th>Delta</th><th>After</th></tr></thead><tbody>${events}</tbody></table>`)}
-      </article>
-    </div>
-    <article class="card">
-      <h3>상대 전적(단식)</h3>
-      ${tableWrap(`<table class="table"><thead><tr><th>상대</th><th>경기</th><th>승</th><th>패</th><th>무</th></tr></thead><tbody>${opponents}</tbody></table>`)}
-    </article>
-  `;
-}
-
-function renderStats() {
-  const root = q("#statsContent");
-  const data = state.overview;
-  if (!data) {
-    root.innerHTML = '<p class="muted">통계를 불러오는 중입니다.</p>';
-    return;
-  }
-
-  const topRows = data.topPlayers.map((p) => `<tr><td class="num-col">${p.rank}</td><td>${p.name}</td><td class="num-col">${formatNum(p.currentElo)}</td></tr>`).join("");
-  const tourRows = data.recentTournaments
-    .map((t) => `<tr><td>${t.tournamentDate}</td><td>${t.name}</td><td>${tournamentStatusLabel(t.status)}</td><td>${t.matchCount}</td></tr>`)
-    .join("");
-
-  const histEntries = Object.entries(data.eloHistogram || {});
-  const histMax = Math.max(...histEntries.map(([, v]) => Number(v || 0)), 1);
-  const hist = histEntries.map(([bucket, count]) => `
-    <div class="hist-row">
-      <div>${bucket}</div>
-      <div class="hist-bar"><div class="hist-fill" style="width:${(Number(count || 0) / histMax) * 100}%"></div></div>
-      <div>${count}</div>
-    </div>
-  `).join("");
-
-  root.innerHTML = `
-    <div class="grid two">
-      <article class="card">
-        <h3>요약</h3>
-        <p>선수 ${data.summary.players}명 / 종료 대회 ${data.summary.finalizedTournaments}개 / 진행중 대회 ${data.summary.openTournaments}개</p>
-        <p>종료 경기 ${data.summary.finalizedMatches}개 / 평균 ELO ${formatNum(data.summary.avgElo)}</p>
-      </article>
-      <article class="card">
-        <h3>ELO 분포</h3>
-        <div class="hist">${hist}</div>
-      </article>
-    </div>
-    <div class="grid two">
-      <article class="card">
-        <h3>상위 랭킹</h3>
-        ${tableWrap(`<table class="table"><thead><tr><th>#</th><th>선수</th><th>ELO</th></tr></thead><tbody>${topRows}</tbody></table>`)}
-      </article>
-      <article class="card">
-        <h3>최근 대회</h3>
-        ${tableWrap(`<table class="table"><thead><tr><th>날짜</th><th>대회</th><th>상태</th><th>경기수</th></tr></thead><tbody>${tourRows}</tbody></table>`)}
-      </article>
-    </div>
-  `;
-}
-
-function renderAdmin() {
-  const ruleRoot = q("#ruleEditorRows");
-  const playerSelect = q("#adminPlayerSelect");
-  const playerMeta = q("#adminPlayerMeta");
-  const playersTableRoot = q("#adminPlayersTable");
-  const queryInput = q("#adminPlayerSearchInput");
-  const statusFilter = q("#adminPlayerStatusFilter");
-  if (!ruleRoot || !playerSelect || !playerMeta || !playersTableRoot) return;
-
-  if (queryInput) queryInput.value = state.adminPlayerQuery;
-  if (statusFilter) statusFilter.value = state.adminPlayerStatusFilter;
-
-  const rules = getTournamentRules();
-  ruleRoot.innerHTML = rules.map((rule) => `
-    <div class="rule-row">
-      <div class="rule-name">${rule.displayName}</div>
-      <input id="ruleK-${rule.tournamentType}" type="number" min="0" value="${Number(rule.kFactor)}" />
-      <input id="ruleBase-${rule.tournamentType}" type="number" min="0" value="${Number(rule.basePoints)}" />
-      <button type="button" data-save-rule="${rule.tournamentType}">저장</button>
-    </div>
-  `).join("");
-
-  playerSelect.innerHTML = state.adminPlayers.map((player) => {
-    const status = player.isActive ? "" : " [비활성]";
-    return `<option value="${player.id}">${player.name}${status} (${formatNum(player.currentElo)})</option>`;
-  }).join("");
-
-  if (state.adminSelectedPlayerId != null) {
-    playerSelect.value = String(state.adminSelectedPlayerId);
-  }
-
-  const selectedPlayer = getSelectedAdminPlayer();
-  const renameInput = q("#adminRenameInput");
-  const eloInput = q("#adminEloInput");
-  const deleteButton = q("#adminDeletePlayerBtn");
-  const renameButton = q("#adminRenameForm button");
-  const eloButton = q("#adminEloForm button");
-
-  if (!selectedPlayer) {
-    playerMeta.textContent = "선수를 선택하세요.";
-    if (renameInput) renameInput.disabled = true;
-    if (eloInput) eloInput.disabled = true;
-    if (renameButton) renameButton.disabled = true;
-    if (eloButton) eloButton.disabled = true;
-    if (deleteButton) deleteButton.disabled = true;
-  } else {
-    const statusClass = selectedPlayer.isActive ? "active" : "inactive";
-    const openTournamentHint = selectedPlayer.inOpenTournament ? " · 진행 중 대회 참가 중" : "";
-    playerMeta.innerHTML = `
-      <span class="admin-meta ${statusClass}">${selectedPlayer.isActive ? "활성" : "비활성"}</span>
-      현재 ELO ${formatNum(selectedPlayer.currentElo)}${openTournamentHint}
-    `;
-    if (renameInput) renameInput.disabled = false;
-    if (eloInput) eloInput.disabled = false;
-    if (renameButton) renameButton.disabled = false;
-    if (eloButton) eloButton.disabled = false;
-    if (deleteButton) deleteButton.disabled = !selectedPlayer.isActive;
-  }
-
-  if (!state.adminPlayers.length) {
-    playersTableRoot.innerHTML = '<p class="muted">등록된 선수가 없습니다.</p>';
-    return;
-  }
-
-  const query = normalizeSearch(state.adminPlayerQuery);
-  const filteredPlayers = state.adminPlayers.filter((player) => {
-    const nameMatched = !query || normalizeSearch(player.name).includes(query);
-    const statusMatched = state.adminPlayerStatusFilter === "ALL"
-      || (state.adminPlayerStatusFilter === "ACTIVE" && player.isActive)
-      || (state.adminPlayerStatusFilter === "INACTIVE" && !player.isActive);
-    return nameMatched && statusMatched;
-  });
-
-  if (!filteredPlayers.length) {
-    playersTableRoot.innerHTML = '<p class="muted">필터 조건에 맞는 선수가 없습니다.</p>';
-    return;
-  }
-
-  const rows = filteredPlayers.map((player) => `
-    <tr>
-      <td class="num-col">${player.id}</td>
-      <td>${player.name}</td>
-      <td class="num-col">${formatNum(player.currentElo)}</td>
-      <td>${player.isActive ? "활성" : "비활성"}</td>
-      <td>${player.inOpenTournament ? "참가중" : "-"}</td>
-      <td class="cell-muted num-col">${player.matchCount}</td>
-      <td><button type="button" data-admin-select="${player.id}">선택</button></td>
-    </tr>
-  `).join("");
-
-  playersTableRoot.innerHTML = tableWrap(`
-    <table class="table">
-      <thead><tr><th>ID</th><th>이름</th><th>ELO</th><th>상태</th><th>OPEN 대회</th><th>기록 경기수</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `);
-}
-
-function renderDashboard() {
-  renderRanking();
-  renderRecentMatches();
-  renderSimulator();
-}
-
-function renderAll() {
-  renderTournamentTypeSelectOptions();
-  renderQuickMetrics();
-  renderLastSyncAt();
-  renderDashboard();
-  renderTournament();
-  renderRecord();
-  renderPlayerStats();
-  renderStats();
-  renderAdmin();
-}
-
-async function init() {
-  bindTabEvents();
-  bindGlobalActions();
-  bindDashboardFilters();
-  bindPlayerForm();
-  bindSimForm();
-  bindTournamentParticipantPicker();
-  bindParticipantPickerActions();
-  bindTournamentCreateForm();
-  bindMatchForm();
-  bindTournamentActionButtons();
-  bindRecordActions();
-  bindPlayerActions();
-  bindStatsActions();
-  bindAdminActions();
-  bindAdminFilters();
-
-  q("#tournamentDate").value = new Date().toISOString().slice(0, 10);
-  toggleDoubleInputs();
-
-  await checkHealth();
-  await refreshAll();
-  await loadRecordDefault();
-}
-
-init().catch((err) => {
-  showToast(err.message || "초기화 실패", true);
+  `,
 });
+
+app.mount("#app");
