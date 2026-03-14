@@ -396,6 +396,7 @@ const app = createApp({
         matchEntry: false,
         tournamentSettings: false,
         playerMatches: false,
+        eloSimulator: false,
       },
 
       charts: {
@@ -760,6 +761,15 @@ const app = createApp({
 
     closePlayerMatchesModal() {
       this.modals.playerMatches = false;
+    },
+
+    openEloSimulatorModal() {
+      this.simResult = null;
+      this.modals.eloSimulator = true;
+    },
+
+    closeEloSimulatorModal() {
+      this.modals.eloSimulator = false;
     },
 
     destroyPlayerStatsChart() {
@@ -1483,38 +1493,14 @@ const app = createApp({
 
           <main class="panel-stack">
             <section v-show="activeTab === 'dashboard'" class="panel-group">
-              <div class="panel-grid two">
-                <article class="surface accent">
-                  <h3>선수 등록</h3>
-                  <p class="muted">신규 선수는 활성 선수 평균 ELO를 기준으로 자동 초기화됩니다.</p>
-                  <form class="inline-form" @submit.prevent="submitPlayer">
-                    <input v-model.trim="forms.playerName" placeholder="선수 이름" required />
-                    <button type="submit" class="btn primary">등록</button>
-                  </form>
-                </article>
-
-                <article class="surface">
-                  <h3>ELO 시뮬레이터</h3>
-                  <form class="sim-grid" @submit.prevent="runSimulator">
-                    <label>대회 타입
-                      <select v-model="forms.simType">
-                        <option v-for="rule in activeRules" :key="rule.tournamentType" :value="rule.tournamentType">{{ rule.displayName }}</option>
-                      </select>
-                    </label>
-                    <label>Player A ELO<input v-model.number="forms.simAelo" type="number" min="1" /></label>
-                    <label>Player B ELO<input v-model.number="forms.simBelo" type="number" min="1" /></label>
-                    <label>Score A<input v-model.number="forms.simAscore" type="number" min="0" /></label>
-                    <label>Score B<input v-model.number="forms.simBscore" type="number" min="0" /></label>
-                    <button type="submit" class="btn primary">계산</button>
-                  </form>
-
-                  <div v-if="simResult" class="sim-result">
-                    <div class="sim-pill up">A {{ formatSigned(simResult.deltaA) }}</div>
-                    <div class="sim-pill down">B {{ formatSigned(simResult.deltaB) }}</div>
-                    <small>예상승률 A {{ simResult.expectedA }}% · B {{ simResult.expectedB }}%</small>
-                  </div>
-                </article>
-              </div>
+              <article class="surface accent">
+                <h3>선수 등록</h3>
+                <p class="muted">신규 선수는 활성 선수 평균 ELO를 기준으로 자동 초기화됩니다.</p>
+                <form class="inline-form" @submit.prevent="submitPlayer">
+                  <input v-model.trim="forms.playerName" placeholder="선수 이름" required />
+                  <button type="submit" class="btn primary">등록</button>
+                </form>
+              </article>
 
               <div class="panel-grid two">
                 <article class="surface">
@@ -2000,7 +1986,10 @@ const app = createApp({
             <section v-show="activeTab === 'admin'" class="panel-group">
               <div class="panel-grid two">
                 <article class="surface">
-                  <h3>대회 타입 점수 규칙</h3>
+                  <header class="surface-head">
+                    <h3>대회 타입 점수 규칙</h3>
+                    <button type="button" class="btn ghost mini" @click="openEloSimulatorModal">ELO 시뮬레이터</button>
+                  </header>
                   <p class="muted">정규 대회 / 상시 대회 / 친선전의 K 값과 base 점수를 조정합니다.</p>
                   <div class="rule-grid">
                     <div v-for="rule in activeRules" :key="'admin-rule-' + rule.tournamentType" class="rule-card">
@@ -2096,6 +2085,40 @@ const app = createApp({
               </article>
             </section>
           </main>
+        </div>
+      </div>
+
+      <div
+        v-if="modals.eloSimulator"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeEloSimulatorModal"
+      >
+        <div class="modal-card">
+          <header class="modal-head">
+            <h3>ELO 시뮬레이터</h3>
+            <button type="button" class="modal-close" @click="closeEloSimulatorModal">닫기</button>
+          </header>
+
+          <form class="sim-grid modal-body" @submit.prevent="runSimulator">
+            <label>대회 타입
+              <select v-model="forms.simType">
+                <option v-for="rule in activeRules" :key="'sim-rule-' + rule.tournamentType" :value="rule.tournamentType">{{ rule.displayName }}</option>
+              </select>
+            </label>
+            <label>Player A ELO<input v-model.number="forms.simAelo" type="number" min="1" /></label>
+            <label>Player B ELO<input v-model.number="forms.simBelo" type="number" min="1" /></label>
+            <label>Score A<input v-model.number="forms.simAscore" type="number" min="0" /></label>
+            <label>Score B<input v-model.number="forms.simBscore" type="number" min="0" /></label>
+            <button type="submit" class="btn primary">계산</button>
+          </form>
+
+          <div v-if="simResult" class="sim-result">
+            <div class="sim-pill up">A {{ formatSigned(simResult.deltaA) }}</div>
+            <div class="sim-pill down">B {{ formatSigned(simResult.deltaB) }}</div>
+            <small>예상승률 A {{ simResult.expectedA }}% · B {{ simResult.expectedB }}%</small>
+          </div>
         </div>
       </div>
 
