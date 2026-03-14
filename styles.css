@@ -65,6 +65,38 @@ button {
   color: inherit;
 }
 
+.inline-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.table-link {
+  color: #1f58c4;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.table-link:hover {
+  color: #173f8f;
+}
+
+.meta-link {
+  color: #2d4f73;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.meta-link:hover {
+  color: #1e3f66;
+}
+
 .app-root {
   position: relative;
 }
@@ -1026,11 +1058,33 @@ select:focus {
 
 .team-name {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 600;
+}
+
+.team-link {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.team-link:hover {
+  color: #1c4a8f;
+}
+
+.team-sep {
+  color: #8194ad;
+  flex: 0 0 auto;
 }
 
 .team-score {

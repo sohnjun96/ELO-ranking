@@ -203,8 +203,10 @@ const MatchCard = {
     typeLabel: { type: String, default: "" },
     showMeta: { type: Boolean, default: true },
     deletable: { type: Boolean, default: false },
+    linkableTournament: { type: Boolean, default: false },
+    showPlayerLinks: { type: Boolean, default: false },
   },
-  emits: ["delete"],
+  emits: ["delete", "open-tournament", "open-player"],
   computed: {
     winnerSide() {
       const a = Number(this.match?.scoreA || 0);
@@ -218,10 +220,35 @@ const MatchCard = {
       if (this.winnerSide === "B") return "winner-b";
       return "draw";
     },
+    teamAPlayers() {
+      return this.splitTeamNames(this.match?.teamAName);
+    },
+    teamBPlayers() {
+      return this.splitTeamNames(this.match?.teamBName);
+    },
   },
   methods: {
+    toInt,
     formatSigned,
     matchFormatLabel,
+    splitTeamNames(raw) {
+      return String(raw || "")
+        .split("/")
+        .map((name) => name.trim())
+        .filter(Boolean);
+    },
+    openTournament() {
+      const tournamentId = toInt(this.match?.tournamentId, 0);
+      if (tournamentId > 0) {
+        this.$emit("open-tournament", tournamentId);
+      }
+    },
+    openPlayer(name) {
+      const playerName = String(name || "").trim();
+      if (playerName) {
+        this.$emit("open-player", playerName);
+      }
+    },
   },
   template: `
     <article class="match-card" :class="cardClass">
@@ -235,7 +262,15 @@ const MatchCard = {
 
       <div v-if="showMeta" class="match-meta">
         <span v-if="match.tournamentDate">{{ match.tournamentDate }}</span>
-        <span v-if="match.tournamentName">{{ match.tournamentName }}</span>
+        <span v-if="match.tournamentName">
+          <button
+            v-if="linkableTournament && toInt(match.tournamentId, 0) > 0"
+            type="button"
+            class="inline-link meta-link"
+            @click="openTournament"
+          >{{ match.tournamentName }}</button>
+          <template v-else>{{ match.tournamentName }}</template>
+        </span>
         <span v-if="typeLabel">{{ typeLabel }}</span>
       </div>
 
@@ -243,7 +278,15 @@ const MatchCard = {
         <div class="team-row" :class="{ winner: winnerSide === 'A', loser: winnerSide === 'B' }">
           <div class="team-main">
             <span class="team-side">A</span>
-            <span class="team-name">{{ match.teamAName }}</span>
+            <div class="team-name">
+              <template v-if="showPlayerLinks">
+                <template v-for="(name, idx) in teamAPlayers" :key="'a-' + name + '-' + idx">
+                  <button type="button" class="inline-link team-link" @click="openPlayer(name)">{{ name }}</button>
+                  <span v-if="idx < teamAPlayers.length - 1" class="team-sep">/</span>
+                </template>
+              </template>
+              <template v-else>{{ match.teamAName }}</template>
+            </div>
           </div>
           <div class="team-score">{{ match.scoreA }}</div>
         </div>
@@ -251,7 +294,15 @@ const MatchCard = {
         <div class="team-row" :class="{ winner: winnerSide === 'B', loser: winnerSide === 'A' }">
           <div class="team-main">
             <span class="team-side">B</span>
-            <span class="team-name">{{ match.teamBName }}</span>
+            <div class="team-name">
+              <template v-if="showPlayerLinks">
+                <template v-for="(name, idx) in teamBPlayers" :key="'b-' + name + '-' + idx">
+                  <button type="button" class="inline-link team-link" @click="openPlayer(name)">{{ name }}</button>
+                  <span v-if="idx < teamBPlayers.length - 1" class="team-sep">/</span>
+                </template>
+              </template>
+              <template v-else>{{ match.teamBName }}</template>
+            </div>
           </div>
           <div class="team-score">{{ match.scoreB }}</div>
         </div>
@@ -518,6 +569,35 @@ const app = createApp({
       if (status === "FINALIZED") return "active";
       if (status === "CANCELED") return "inactive";
       return "";
+    },
+
+    findPlayerByName(name) {
+      const target = normalizeSearch(name);
+      if (!target) return null;
+      return this.players.find((player) => normalizeSearch(player.name) === target) || null;
+    },
+
+    jumpToPlayerById(playerId) {
+      const id = toInt(playerId, 0);
+      if (id <= 0) return;
+      this.selectedPlayerId = String(id);
+      this.activeTab = "player";
+    },
+
+    jumpToPlayerByName(playerName) {
+      const player = this.findPlayerByName(playerName);
+      if (!player) {
+        this.showToast(`선수를 찾을 수 없습니다: ${playerName}`, true);
+        return;
+      }
+      this.jumpToPlayerById(player.id);
+    },
+
+    jumpToTournamentById(tournamentId) {
+      const id = toInt(tournamentId, 0);
+      if (id <= 0) return;
+      this.selectedRecordTournamentId = String(id);
+      this.activeTab = "records";
     },
 
     showToast(message, isError = false) {
@@ -1454,7 +1534,11 @@ const app = createApp({
                       <tbody>
                         <tr v-for="player in filteredRankingPlayers" :key="'rank-' + player.id">
                           <td>#{{ player.rank }}</td>
-                          <td>{{ player.name }}</td>
+                          <td>
+                            <button type="button" class="inline-link table-link" @click="jumpToPlayerById(player.id)">
+                              {{ player.name }}
+                            </button>
+                          </td>
                           <td>
                             <div class="elo-cell">
                               <strong>{{ formatNum(player.currentElo) }}</strong>
@@ -1486,6 +1570,10 @@ const app = createApp({
                       :key="'recent-' + match.matchId"
                       :match="match"
                       :type-label="tournamentTypeLabel(match.tournamentType)"
+                      :linkable-tournament="true"
+                      :show-player-links="true"
+                      @open-tournament="jumpToTournamentById"
+                      @open-player="jumpToPlayerByName"
                     />
                     <p v-if="!filteredRecentMatches.length" class="empty-copy">최근 경기 데이터가 없습니다.</p>
                   </div>
@@ -1683,7 +1771,11 @@ const app = createApp({
                       </thead>
                       <tbody>
                         <tr v-for="event in recordTournament.ratingEvents" :key="'rating-' + event.playerId">
-                          <td>{{ event.name }}</td>
+                          <td>
+                            <button type="button" class="inline-link table-link" @click="jumpToPlayerById(event.playerId)">
+                              {{ event.name }}
+                            </button>
+                          </td>
                           <td>
                             <div class="elo-result-cell">
                               <span>{{ formatNum(event.eloBefore) }}</span>
@@ -1732,6 +1824,8 @@ const app = createApp({
                     :key="'record-match-' + match.id"
                     :match="match"
                     :show-meta="false"
+                    :show-player-links="true"
+                    @open-player="jumpToPlayerByName"
                   />
                   <p v-if="!recordTournament.matches.length" class="empty-copy">기록된 경기가 없습니다.</p>
                 </div>
