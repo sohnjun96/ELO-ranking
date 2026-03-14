@@ -310,6 +310,8 @@ const app = createApp({
         recentFormat: "ALL",
         participantQuery: "",
         participantIds: [],
+        recordQuery: "",
+        playerQuery: "",
         adminQuery: "",
         adminStatus: "ALL",
       },
@@ -333,6 +335,14 @@ const app = createApp({
         simBscore: 4,
         adminRename: "",
         adminElo: null,
+        tournamentEditName: "",
+        tournamentEditDate: "",
+        tournamentEditType: "REGULAR",
+      },
+
+      modals: {
+        matchEntry: false,
+        tournamentSettings: false,
       },
 
       simResult: null,
@@ -404,6 +414,21 @@ const app = createApp({
 
     recordTournamentOptions() {
       return [...this.tournaments].sort((a, b) => String(b.tournamentDate).localeCompare(String(a.tournamentDate)) || b.id - a.id);
+    },
+
+    filteredRecordTournamentOptions() {
+      const query = normalizeSearch(this.ui.recordQuery);
+      if (!query) return this.recordTournamentOptions;
+      return this.recordTournamentOptions.filter((tournament) =>
+        normalizeSearch(`${tournament.tournamentDate}${tournament.name}`).includes(query)
+      );
+    },
+
+    filteredPlayersForSelector() {
+      const query = normalizeSearch(this.ui.playerQuery);
+      const rows = [...this.players].sort((a, b) => Number(a.rank) - Number(b.rank));
+      if (!query) return rows;
+      return rows.filter((player) => normalizeSearch(player.name).includes(query));
     },
 
     recordMatrixPlayers() {
@@ -610,6 +635,70 @@ const app = createApp({
 
     setMatchFormat(value) {
       this.forms.matchFormat = value === "DOUBLES" ? "DOUBLES" : "SINGLES";
+    },
+
+    openMatchEntryModal() {
+      if (!this.openTournament) return;
+      this.syncMatchSelectDefaults();
+      this.modals.matchEntry = true;
+    },
+
+    closeMatchEntryModal() {
+      this.modals.matchEntry = false;
+    },
+
+    openTournamentSettingsModal() {
+      if (!this.openTournament) return;
+      this.forms.tournamentEditName = this.openTournament.name;
+      this.forms.tournamentEditDate = this.openTournament.tournamentDate;
+      this.forms.tournamentEditType = this.openTournament.tournamentType;
+      this.modals.tournamentSettings = true;
+    },
+
+    closeTournamentSettingsModal() {
+      this.modals.tournamentSettings = false;
+    },
+
+    async submitTournamentSettings() {
+      if (!this.openTournament) return;
+
+      const name = String(this.forms.tournamentEditName || "").trim();
+      const tournamentDate = this.forms.tournamentEditDate;
+      const tournamentType = this.forms.tournamentEditType;
+
+      if (!name) {
+        this.showToast("대회명을 입력하세요.", true);
+        return;
+      }
+
+      const payload = {};
+      if (name !== this.openTournament.name) payload.name = name;
+      if (tournamentDate && tournamentDate !== this.openTournament.tournamentDate) payload.tournamentDate = tournamentDate;
+      if (tournamentType && tournamentType !== this.openTournament.tournamentType) {
+        if ((this.openTournament.matches || []).length > 0) {
+          this.showToast("경기 기록이 있으면 대회 종류를 바꿀 수 없습니다.", true);
+          return;
+        }
+        payload.tournamentType = tournamentType;
+      }
+
+      if (!Object.keys(payload).length) {
+        this.modals.tournamentSettings = false;
+        this.showToast("변경된 내용이 없습니다.");
+        return;
+      }
+
+      try {
+        await this.withLoading("대회 설정을 저장하는 중...", async () => {
+          await requestApi(`/api/tournaments/${this.openTournament.id}`, "PATCH", payload);
+          await Promise.all([this.refreshBootstrap(), this.refreshTournaments()]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.modals.tournamentSettings = false;
+        this.showToast("대회 설정을 저장했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "대회 설정 저장 실패", true);
+      }
     },
 
     async refreshBootstrap() {
@@ -831,6 +920,7 @@ const app = createApp({
           await this.refreshBootstrap();
           this.lastSyncedAt = new Date().toISOString();
         });
+        this.modals.matchEntry = false;
         this.showToast("경기 결과를 기록했습니다.");
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "경기 기록 실패", true);
@@ -868,6 +958,8 @@ const app = createApp({
           ]);
           this.lastSyncedAt = new Date().toISOString();
         });
+        this.modals.matchEntry = false;
+        this.modals.tournamentSettings = false;
         this.showToast("대회를 종료하고 점수를 반영했습니다.");
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "대회 종료 실패", true);
@@ -889,6 +981,8 @@ const app = createApp({
           ]);
           this.lastSyncedAt = new Date().toISOString();
         });
+        this.modals.matchEntry = false;
+        this.modals.tournamentSettings = false;
         this.showToast("대회를 취소했습니다.");
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "대회 취소 실패", true);
@@ -1077,6 +1171,10 @@ const app = createApp({
     openTournament: {
       handler() {
         this.syncMatchSelectDefaults();
+        if (!this.openTournament) {
+          this.modals.matchEntry = false;
+          this.modals.tournamentSettings = false;
+        }
       },
       deep: false,
     },
@@ -1094,6 +1192,16 @@ const app = createApp({
         this.forms.matchB2 = "";
       }
       this.syncMatchSelectDefaults();
+    },
+
+    selectedRecordTournamentId(newValue, oldValue) {
+      if (newValue === oldValue) return;
+      this.loadRecordBySelection();
+    },
+
+    selectedPlayerId(newValue, oldValue) {
+      if (newValue === oldValue) return;
+      this.loadPlayerBySelection();
     },
 
     selectedAdminPlayer: {
@@ -1257,7 +1365,7 @@ const app = createApp({
 
             <section v-show="activeTab === 'tournament'" class="panel-group">
               <div class="panel-grid two">
-                <article class="surface">
+                <article class="surface" v-if="!openTournament">
                   <h3>새 대회 시작</h3>
                   <form class="stack-form" @submit.prevent="submitTournament">
                     <label>대회명<input v-model.trim="forms.tournamentName" required /></label>
@@ -1318,6 +1426,11 @@ const app = createApp({
                   </form>
                 </article>
 
+                <article class="surface" v-else>
+                  <h3>대회 진행 도구</h3>
+                  <p class="muted">대회는 동시에 하나만 진행할 수 있습니다. 설정 변경과 경기 결과 입력은 버튼으로 열리는 모달에서 처리합니다.</p>
+                </article>
+
                 <article class="surface">
                   <h3>진행 중 대회</h3>
                   <div v-if="openTournament" class="open-summary">
@@ -1337,69 +1450,10 @@ const app = createApp({
                 </article>
               </div>
 
-              <article class="surface">
-                <h3>경기 기록</h3>
-                <div v-if="openTournament">
-                  <div class="format-switch">
-                    <span>형식</span>
-                    <div class="switch-toggle">
-                      <button type="button" :class="{ active: forms.matchFormat === 'SINGLES' }" @click="setMatchFormat('SINGLES')">단식</button>
-                      <button type="button" :class="{ active: forms.matchFormat === 'DOUBLES' }" @click="setMatchFormat('DOUBLES')">복식</button>
-                    </div>
-                  </div>
-
-                  <form class="match-entry-grid" @submit.prevent="submitMatch">
-                    <section class="team-entry team-a">
-                      <h4>팀 A</h4>
-                      <label>선수 1
-                        <select v-model="forms.matchA1">
-                          <option value="">선수 선택</option>
-                          <option v-for="player in openTournamentParticipants" :key="'match-a1-' + player.playerId" :value="String(player.playerId)">
-                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
-                          </option>
-                        </select>
-                      </label>
-                      <label v-if="forms.matchFormat === 'DOUBLES'">선수 2
-                        <select v-model="forms.matchA2">
-                          <option value="">선수 선택</option>
-                          <option v-for="player in openTournamentParticipants" :key="'match-a2-' + player.playerId" :value="String(player.playerId)">
-                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
-                          </option>
-                        </select>
-                      </label>
-                      <label class="score-field">점수
-                        <input v-model.number="forms.matchScoreA" type="number" min="0" />
-                      </label>
-                    </section>
-
-                    <section class="team-entry team-b">
-                      <h4>팀 B</h4>
-                      <label>선수 1
-                        <select v-model="forms.matchB1">
-                          <option value="">선수 선택</option>
-                          <option v-for="player in openTournamentParticipants" :key="'match-b1-' + player.playerId" :value="String(player.playerId)">
-                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
-                          </option>
-                        </select>
-                      </label>
-                      <label v-if="forms.matchFormat === 'DOUBLES'">선수 2
-                        <select v-model="forms.matchB2">
-                          <option value="">선수 선택</option>
-                          <option v-for="player in openTournamentParticipants" :key="'match-b2-' + player.playerId" :value="String(player.playerId)">
-                            {{ player.name }} ({{ formatNum(player.projectedElo) }})
-                          </option>
-                        </select>
-                      </label>
-                      <label class="score-field">점수
-                        <input v-model.number="forms.matchScoreB" type="number" min="0" />
-                      </label>
-                    </section>
-
-                    <button type="submit" class="btn primary wide">경기 추가</button>
-                  </form>
-                </div>
-                <p v-else class="empty-copy">진행 중 대회가 있어야 경기 기록이 가능합니다.</p>
-              </article>
+              <div v-if="openTournament" class="tournament-toolbar">
+                <button type="button" class="btn ghost" @click="openTournamentSettingsModal">대회 설정 변경</button>
+                <button type="button" class="btn primary" @click="openMatchEntryModal">경기 결과 입력</button>
+              </div>
 
               <div class="panel-grid two">
                 <article class="surface">
@@ -1456,19 +1510,22 @@ const app = createApp({
                   </div>
                 </article>
               </div>
-            </section>            <section v-show="activeTab === 'records'" class="panel-group">
+            </section>
+
+            <section v-show="activeTab === 'records'" class="panel-group">
               <article class="surface">
                 <header class="surface-head">
                   <h3>대회 기록</h3>
-                  <div class="inline-form">
+                  <div class="inline-form selector-form">
+                    <input v-model.trim="ui.recordQuery" placeholder="대회 검색" />
                     <select v-model="selectedRecordTournamentId">
-                      <option v-for="tournament in recordTournamentOptions" :key="'record-select-' + tournament.id" :value="String(tournament.id)">
+                      <option v-for="tournament in filteredRecordTournamentOptions" :key="'record-select-' + tournament.id" :value="String(tournament.id)">
                         {{ tournament.tournamentDate }} · {{ tournament.name }} ({{ tournamentStatusLabel(tournament.status) }})
                       </option>
                     </select>
-                    <button type="button" class="btn primary" @click="loadRecordBySelection">불러오기</button>
                   </div>
                 </header>
+                <p class="muted">검색 후 선택하면 자동으로 기록이 불러와집니다.</p>
 
                 <div v-if="recordTournament" class="record-overview">
                   <div class="summary-row">
@@ -1555,13 +1612,14 @@ const app = createApp({
               <article class="surface">
                 <header class="surface-head">
                   <h3>선수별 기록</h3>
-                  <div class="inline-form">
+                  <div class="inline-form selector-form">
+                    <input v-model.trim="ui.playerQuery" placeholder="선수 검색" />
                     <select v-model="selectedPlayerId">
-                      <option v-for="player in players" :key="'player-select-' + player.id" :value="String(player.id)">{{ player.name }}</option>
+                      <option v-for="player in filteredPlayersForSelector" :key="'player-select-' + player.id" :value="String(player.id)">{{ player.name }}</option>
                     </select>
-                    <button type="button" class="btn primary" @click="loadPlayerBySelection">조회</button>
                   </div>
                 </header>
+                <p class="muted">검색 후 선수를 선택하면 자동으로 기록이 불러와집니다.</p>
               </article>
 
               <article v-if="playerStats" class="surface">
@@ -1705,7 +1763,9 @@ const app = createApp({
                   </div>
                 </div>
               </article>
-            </section>            <section v-show="activeTab === 'admin'" class="panel-group">
+            </section>
+
+            <section v-show="activeTab === 'admin'" class="panel-group">
               <div class="panel-grid two">
                 <article class="surface">
                   <h3>대회 타입 점수 규칙</h3>
@@ -1804,6 +1864,121 @@ const app = createApp({
               </article>
             </section>
           </main>
+        </div>
+      </div>
+
+      <div
+        v-if="modals.tournamentSettings && openTournament"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeTournamentSettingsModal"
+      >
+        <div class="modal-card">
+          <header class="modal-head">
+            <h3>대회 설정 변경</h3>
+            <button type="button" class="modal-close" @click="closeTournamentSettingsModal">닫기</button>
+          </header>
+
+          <form class="stack-form modal-body" @submit.prevent="submitTournamentSettings">
+            <label>대회명
+              <input v-model.trim="forms.tournamentEditName" required />
+            </label>
+            <label>대회일자
+              <input v-model="forms.tournamentEditDate" type="date" required />
+            </label>
+            <label>대회종류
+              <select v-model="forms.tournamentEditType" :disabled="openTournament.matches.length > 0">
+                <option v-for="rule in activeRules" :key="'edit-type-' + rule.tournamentType" :value="rule.tournamentType">
+                  {{ rule.displayName }}
+                </option>
+              </select>
+            </label>
+            <p v-if="openTournament.matches.length > 0" class="muted">이미 경기 기록이 있어 대회 종류는 변경할 수 없습니다.</p>
+
+            <div class="modal-actions">
+              <button type="button" class="btn ghost" @click="closeTournamentSettingsModal">취소</button>
+              <button type="submit" class="btn primary">저장</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div
+        v-if="modals.matchEntry && openTournament"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeMatchEntryModal"
+      >
+        <div class="modal-card wide">
+          <header class="modal-head">
+            <h3>경기 결과 입력</h3>
+            <button type="button" class="modal-close" @click="closeMatchEntryModal">닫기</button>
+          </header>
+
+          <form class="modal-body" @submit.prevent="submitMatch">
+            <div class="format-switch">
+              <span>형식</span>
+              <div class="switch-toggle">
+                <button type="button" :class="{ active: forms.matchFormat === 'SINGLES' }" @click="setMatchFormat('SINGLES')">단식</button>
+                <button type="button" :class="{ active: forms.matchFormat === 'DOUBLES' }" @click="setMatchFormat('DOUBLES')">복식</button>
+              </div>
+            </div>
+
+            <div class="match-entry-grid">
+              <section class="team-entry team-a">
+                <h4>팀 A</h4>
+                <label>선수 1
+                  <select v-model="forms.matchA1">
+                    <option value="">선수 선택</option>
+                    <option v-for="player in openTournamentParticipants" :key="'modal-match-a1-' + player.playerId" :value="String(player.playerId)">
+                      {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                    </option>
+                  </select>
+                </label>
+                <label v-if="forms.matchFormat === 'DOUBLES'">선수 2
+                  <select v-model="forms.matchA2">
+                    <option value="">선수 선택</option>
+                    <option v-for="player in openTournamentParticipants" :key="'modal-match-a2-' + player.playerId" :value="String(player.playerId)">
+                      {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                    </option>
+                  </select>
+                </label>
+                <label class="score-field">점수
+                  <input v-model.number="forms.matchScoreA" type="number" min="0" />
+                </label>
+              </section>
+
+              <section class="team-entry team-b">
+                <h4>팀 B</h4>
+                <label>선수 1
+                  <select v-model="forms.matchB1">
+                    <option value="">선수 선택</option>
+                    <option v-for="player in openTournamentParticipants" :key="'modal-match-b1-' + player.playerId" :value="String(player.playerId)">
+                      {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                    </option>
+                  </select>
+                </label>
+                <label v-if="forms.matchFormat === 'DOUBLES'">선수 2
+                  <select v-model="forms.matchB2">
+                    <option value="">선수 선택</option>
+                    <option v-for="player in openTournamentParticipants" :key="'modal-match-b2-' + player.playerId" :value="String(player.playerId)">
+                      {{ player.name }} ({{ formatNum(player.projectedElo) }})
+                    </option>
+                  </select>
+                </label>
+                <label class="score-field">점수
+                  <input v-model.number="forms.matchScoreB" type="number" min="0" />
+                </label>
+              </section>
+            </div>
+
+            <div class="modal-actions">
+              <button type="button" class="btn ghost" @click="closeMatchEntryModal">취소</button>
+              <button type="submit" class="btn primary">경기 추가</button>
+            </div>
+          </form>
         </div>
       </div>
 

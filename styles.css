@@ -803,6 +803,31 @@ select:focus {
   gap: 8px;
 }
 
+.action-row.left {
+  justify-content: flex-start;
+}
+
+.tournament-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.selector-form {
+  width: 100%;
+}
+
+.selector-form input {
+  min-width: 180px;
+  flex: 1 1 200px;
+}
+
+.selector-form select {
+  min-width: 280px;
+  flex: 2 1 320px;
+}
+
 .rule-grid {
   display: grid;
   gap: 8px;
@@ -1035,6 +1060,70 @@ select:focus {
   color: #a3354c;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(13, 25, 42, 0.28);
+  backdrop-filter: blur(2px);
+}
+
+.modal-card {
+  width: min(560px, 95vw);
+  max-height: min(90vh, 840px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: #fff;
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.modal-card.wide {
+  width: min(920px, 95vw);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modal-head h3 {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.modal-close {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: #fff;
+  color: #38506e;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modal-body {
+  display: grid;
+  gap: 10px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .loading-overlay {
   position: fixed;
   inset: 0;
@@ -1165,6 +1254,11 @@ select:focus {
 
   .rule-grid {
     grid-template-columns: 1fr;
+  }
+
+  .selector-form select {
+    min-width: 0;
+    flex: 1 1 100%;
   }
 }
 
