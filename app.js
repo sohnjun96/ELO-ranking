@@ -229,8 +229,18 @@ const MatchCard = {
   },
   methods: {
     toInt,
-    formatSigned,
     matchFormatLabel,
+    deltaDirection(value) {
+      const n = Number(value || 0);
+      if (n > 0) return "up";
+      if (n < 0) return "down";
+      return "flat";
+    },
+    formatDeltaTag(value) {
+      const n = Number(value || 0);
+      if (n === 0) return "0";
+      return `${n > 0 ? "+" : "-"}${Math.abs(n)}`;
+    },
     splitTeamNames(raw) {
       return String(raw || "")
         .split("/")
@@ -252,40 +262,53 @@ const MatchCard = {
   },
   template: `
     <article class="match-card" :class="cardClass">
-      <header class="match-head">
-        <div class="match-head-left">
-          <span v-if="match.matchOrder != null" class="match-order">#{{ match.matchOrder }}</span>
-          <span class="match-format">{{ matchFormatLabel(match.matchFormat) }}</span>
+      <header class="match-card-head">
+        <div class="match-head-top">
+          <div class="match-head-left">
+            <span v-if="match.matchOrder != null" class="match-order">#{{ match.matchOrder }}</span>
+            <span class="match-format">{{ matchFormatLabel(match.matchFormat) }}</span>
+          </div>
+          <div class="match-head-right">
+            <span class="match-date">{{ match.tournamentDate || "-" }}</span>
+            <button v-if="deletable" type="button" class="btn danger mini" @click="$emit('delete')">Delete</button>
+          </div>
         </div>
-        <button v-if="deletable" type="button" class="btn danger mini" @click="$emit('delete')">삭제</button>
-      </header>
 
-      <div v-if="showMeta" class="match-meta">
-        <span v-if="match.tournamentDate">{{ match.tournamentDate }}</span>
-        <span v-if="match.tournamentName">
-          <button
-            v-if="linkableTournament && toInt(match.tournamentId, 0) > 0"
-            type="button"
-            class="inline-link meta-link"
-            @click="openTournament"
-          >{{ match.tournamentName }}</button>
-          <template v-else>{{ match.tournamentName }}</template>
-        </span>
-        <span v-if="typeLabel">{{ typeLabel }}</span>
-      </div>
+        <div v-if="showMeta || match.tournamentName || typeLabel" class="match-meta-line">
+          <template v-if="match.tournamentName">
+            <button
+              v-if="linkableTournament && toInt(match.tournamentId, 0) > 0"
+              type="button"
+              class="inline-link meta-link"
+              @click="openTournament"
+            >{{ match.tournamentName }}</button>
+            <template v-else>{{ match.tournamentName }}</template>
+          </template>
+          <template v-else-if="showMeta">
+            <span>Match</span>
+          </template>
+          <template v-if="typeLabel">
+            <span class="meta-dot">&middot;</span>
+            <span>{{ typeLabel }}</span>
+          </template>
+        </div>
+      </header>
 
       <div class="match-body">
         <div class="team-row" :class="{ winner: winnerSide === 'A', loser: winnerSide === 'B' }">
           <div class="team-main">
             <span class="team-side">A</span>
-            <div class="team-name">
-              <template v-if="showPlayerLinks">
-                <template v-for="(name, idx) in teamAPlayers" :key="'a-' + name + '-' + idx">
-                  <button type="button" class="inline-link team-link" @click="openPlayer(name)">{{ name }}</button>
-                  <span v-if="idx < teamAPlayers.length - 1" class="team-sep">/</span>
+            <div class="team-stack">
+              <div class="team-name">
+                <template v-if="showPlayerLinks">
+                  <template v-for="(name, idx) in teamAPlayers" :key="'a-' + name + '-' + idx">
+                    <button type="button" class="inline-link team-link" @click="openPlayer(name)">{{ name }}</button>
+                    <span v-if="idx < teamAPlayers.length - 1" class="team-sep">/</span>
+                  </template>
                 </template>
-              </template>
-              <template v-else>{{ match.teamAName }}</template>
+                <template v-else>{{ match.teamAName }}</template>
+              </div>
+              <small class="team-delta" :class="deltaDirection(match.deltaTeamA)">{{ formatDeltaTag(match.deltaTeamA) }}</small>
             </div>
           </div>
           <div class="team-score">{{ match.scoreA }}</div>
@@ -294,24 +317,22 @@ const MatchCard = {
         <div class="team-row" :class="{ winner: winnerSide === 'B', loser: winnerSide === 'A' }">
           <div class="team-main">
             <span class="team-side">B</span>
-            <div class="team-name">
-              <template v-if="showPlayerLinks">
-                <template v-for="(name, idx) in teamBPlayers" :key="'b-' + name + '-' + idx">
-                  <button type="button" class="inline-link team-link" @click="openPlayer(name)">{{ name }}</button>
-                  <span v-if="idx < teamBPlayers.length - 1" class="team-sep">/</span>
+            <div class="team-stack">
+              <div class="team-name">
+                <template v-if="showPlayerLinks">
+                  <template v-for="(name, idx) in teamBPlayers" :key="'b-' + name + '-' + idx">
+                    <button type="button" class="inline-link team-link" @click="openPlayer(name)">{{ name }}</button>
+                    <span v-if="idx < teamBPlayers.length - 1" class="team-sep">/</span>
+                  </template>
                 </template>
-              </template>
-              <template v-else>{{ match.teamBName }}</template>
+                <template v-else>{{ match.teamBName }}</template>
+              </div>
+              <small class="team-delta" :class="deltaDirection(match.deltaTeamB)">{{ formatDeltaTag(match.deltaTeamB) }}</small>
             </div>
           </div>
           <div class="team-score">{{ match.scoreB }}</div>
         </div>
       </div>
-
-      <footer class="delta-row">
-        <span class="delta-chip" :class="Number(match.deltaTeamA) >= 0 ? 'up' : 'down'">A {{ formatSigned(match.deltaTeamA) }}</span>
-        <span class="delta-chip" :class="Number(match.deltaTeamB) >= 0 ? 'up' : 'down'">B {{ formatSigned(match.deltaTeamB) }}</span>
-      </footer>
     </article>
   `,
 };
