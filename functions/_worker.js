@@ -616,22 +616,58 @@ async function updateTournament(db, tournamentId, body) {
   }
 
   if (body.participantIds != null) {
-    assert(matchCount === 0, "Cannot change participants after matches are recorded");
     const ids = parseParticipantIds(body.participantIds);
     const players = await fetchPlayersByIds(db, ids);
     assert(players.length === ids.length, "Some participants do not exist");
 
+    const currentRows = await dbAll(
+      db,
+      `SELECT player_id AS playerId, seed_elo AS seedElo
+       FROM tournament_participants
+       WHERE tournament_id=?`,
+      tournamentId
+    );
+    const currentSeedMap = new Map(currentRows.map((row) => [Number(row.playerId), Number(row.seedElo)]));
+    const nextSet = new Set(ids);
+
+    if (matchCount > 0) {
+      const playedRows = await dbAll(
+        db,
+        `SELECT team_a_player1_id AS playerId FROM matches WHERE tournament_id=? AND status='ACTIVE'
+         UNION
+         SELECT team_a_player2_id AS playerId FROM matches WHERE tournament_id=? AND status='ACTIVE'
+         UNION
+         SELECT team_b_player1_id AS playerId FROM matches WHERE tournament_id=? AND status='ACTIVE'
+         UNION
+         SELECT team_b_player2_id AS playerId FROM matches WHERE tournament_id=? AND status='ACTIVE'`,
+        tournamentId,
+        tournamentId,
+        tournamentId,
+        tournamentId
+      );
+      for (const row of playedRows) {
+        const playedId = Number(row.playerId);
+        if (playedId > 0) {
+          assert(nextSet.has(playedId), "Cannot remove participants who already played matches");
+        }
+      }
+    }
+
     await dbRun(db, `DELETE FROM tournament_participants WHERE tournament_id=?`, tournamentId);
     const sorted = players
-      .map((p) => ({ playerId: Number(p.id), currentElo: Number(p.currentElo) }))
-      .sort((a, b) => b.currentElo - a.currentElo || a.playerId - b.playerId);
+      .map((p) => {
+        const playerId = Number(p.id);
+        const seedElo = currentSeedMap.has(playerId) ? Number(currentSeedMap.get(playerId)) : Number(p.currentElo);
+        return { playerId, seedElo };
+      })
+      .sort((a, b) => b.seedElo - a.seedElo || a.playerId - b.playerId);
 
     await db.batch(
       sorted.map((p, idx) =>
         db.prepare(
           `INSERT INTO tournament_participants (tournament_id, player_id, seed_elo, seed_rank, joined_at)
-          VALUES (?, ?, ?, ?, datetime('now'))`
-        ).bind(tournamentId, p.playerId, p.currentElo, idx + 1)
+           VALUES (?, ?, ?, ?, datetime('now'))`
+        ).bind(tournamentId, p.playerId, p.seedElo, idx + 1)
       )
     );
   }

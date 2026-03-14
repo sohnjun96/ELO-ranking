@@ -362,6 +362,8 @@ const app = createApp({
         recentFormat: "ALL",
         participantQuery: "",
         participantIds: [],
+        tournamentEditParticipantQuery: "",
+        tournamentEditParticipantIds: [],
         recordQuery: "",
         playerQuery: "",
         adminQuery: "",
@@ -466,6 +468,17 @@ const app = createApp({
 
     selectedParticipants() {
       const set = new Set(this.ui.participantIds.map((id) => toInt(id)).filter((id) => id > 0));
+      return this.participantPool.filter((player) => set.has(toInt(player.id)));
+    },
+
+    filteredTournamentEditParticipantPool() {
+      const query = normalizeSearch(this.ui.tournamentEditParticipantQuery);
+      if (!query) return this.participantPool;
+      return this.participantPool.filter((player) => normalizeSearch(player.name).includes(query));
+    },
+
+    selectedTournamentEditParticipants() {
+      const set = new Set(this.ui.tournamentEditParticipantIds.map((id) => toInt(id)).filter((id) => id > 0));
       return this.participantPool.filter((player) => set.has(toInt(player.id)));
     },
 
@@ -717,6 +730,9 @@ const app = createApp({
       this.ui.participantIds = this.ui.participantIds
         .map((id) => toInt(id))
         .filter((id) => id > 0 && valid.has(id));
+      this.ui.tournamentEditParticipantIds = this.ui.tournamentEditParticipantIds
+        .map((id) => toInt(id))
+        .filter((id) => id > 0 && valid.has(id));
     },
 
     syncMatchSelectDefaults() {
@@ -769,6 +785,35 @@ const app = createApp({
       }
     },
 
+    isTournamentEditParticipantSelected(playerId) {
+      return this.ui.tournamentEditParticipantIds.map((id) => toInt(id)).includes(toInt(playerId));
+    },
+
+    toggleTournamentEditParticipant(playerId) {
+      const id = toInt(playerId);
+      if (id <= 0) return;
+      if (this.isTournamentEditParticipantSelected(id)) {
+        this.ui.tournamentEditParticipantIds = this.ui.tournamentEditParticipantIds.filter((pickedId) => toInt(pickedId) !== id);
+        return;
+      }
+      this.ui.tournamentEditParticipantIds = [...this.ui.tournamentEditParticipantIds.map((pickedId) => toInt(pickedId)), id];
+    },
+
+    clearTournamentEditParticipantSelection() {
+      this.ui.tournamentEditParticipantIds = [];
+    },
+
+    selectAllTournamentEditParticipants() {
+      this.ui.tournamentEditParticipantIds = this.participantPool.map((player) => toInt(player.id));
+    },
+
+    addFirstSearchedTournamentEditParticipant() {
+      const target = this.filteredTournamentEditParticipantPool.find((player) => !this.isTournamentEditParticipantSelected(player.id));
+      if (target) {
+        this.toggleTournamentEditParticipant(target.id);
+      }
+    },
+
     setMatchFormat(value) {
       this.forms.matchFormat = value === "DOUBLES" ? "DOUBLES" : "SINGLES";
     },
@@ -788,6 +833,10 @@ const app = createApp({
       this.forms.tournamentEditName = this.openTournament.name;
       this.forms.tournamentEditDate = this.openTournament.tournamentDate;
       this.forms.tournamentEditType = this.openTournament.tournamentType;
+      this.ui.tournamentEditParticipantIds = (this.openTournament.participants || [])
+        .map((player) => toInt(player.playerId))
+        .filter((id) => id > 0);
+      this.ui.tournamentEditParticipantQuery = "";
       this.modals.tournamentSettings = true;
     },
 
@@ -900,6 +949,7 @@ const app = createApp({
       const name = String(this.forms.tournamentEditName || "").trim();
       const tournamentDate = this.forms.tournamentEditDate;
       const tournamentType = this.forms.tournamentEditType;
+      const participantIds = [...new Set(this.ui.tournamentEditParticipantIds.map((id) => toInt(id)).filter((id) => id > 0))];
 
       if (!name) {
         this.showToast("대회명을 입력하세요.", true);
@@ -917,6 +967,19 @@ const app = createApp({
         payload.tournamentType = tournamentType;
       }
 
+      const currentParticipantIds = [...new Set((this.openTournament.participants || []).map((player) => toInt(player.playerId)).filter((id) => id > 0))];
+      const currentSet = new Set(currentParticipantIds);
+      const sameParticipants =
+        participantIds.length === currentParticipantIds.length && participantIds.every((id) => currentSet.has(id));
+
+      if (!sameParticipants) {
+        if (participantIds.length < 2) {
+          this.showToast("참가자는 최소 2명 이상 선택해야 합니다.", true);
+          return;
+        }
+        payload.participantIds = participantIds;
+      }
+
       if (!Object.keys(payload).length) {
         this.modals.tournamentSettings = false;
         this.showToast("변경된 내용이 없습니다.");
@@ -930,7 +993,7 @@ const app = createApp({
           this.lastSyncedAt = new Date().toISOString();
         });
         this.modals.tournamentSettings = false;
-        this.showToast("대회 설정을 저장했습니다.");
+        this.showToast("대회 설정이 저장되었습니다.");
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "대회 설정 저장 실패", true);
       }
@@ -1627,8 +1690,8 @@ const app = createApp({
             </section>
 
             <section v-show="activeTab === 'tournament'" class="panel-group">
-              <div class="panel-grid two">
-                <article class="surface" v-if="!openTournament">
+              <div v-if="!openTournament" class="panel-grid two">
+                <article class="surface">
                   <h3>새 대회 시작</h3>
                   <form class="stack-form" @submit.prevent="submitTournament">
                     <label>대회명<input v-model.trim="forms.tournamentName" required /></label>
@@ -1689,14 +1752,21 @@ const app = createApp({
                   </form>
                 </article>
 
-                <article class="surface" v-else>
-                  <h3>대회 진행 도구</h3>
-                  <p class="muted">대회는 동시에 하나만 진행할 수 있습니다. 설정 변경과 경기 결과 입력은 버튼으로 열리는 모달에서 처리합니다.</p>
+                <article class="surface">
+                  <h3>진행 중 대회</h3>
+                  <p class="empty-copy">현재 진행 중인 대회가 없습니다.</p>
                 </article>
+              </div>
+
+              <template v-else>
+                <div class="tournament-toolbar">
+                  <button type="button" class="btn ghost" @click="openTournamentSettingsModal">대회 설정 변경</button>
+                  <button type="button" class="btn primary" @click="openMatchEntryModal">경기 결과 입력</button>
+                </div>
 
                 <article class="surface">
                   <h3>진행 중 대회</h3>
-                  <div v-if="openTournament" class="open-summary">
+                  <div class="open-summary">
                     <p class="open-title">{{ openTournament.name }}</p>
                     <div class="summary-row">
                       <span>{{ openTournament.tournamentDate }}</span>
@@ -1709,70 +1779,64 @@ const app = createApp({
                       <div><strong>K {{ openTournament.kFactor }}</strong><small>base {{ openTournament.basePoints }}</small></div>
                     </div>
                   </div>
-                  <p v-else class="empty-copy">진행 중 대회가 없습니다.</p>
-                </article>
-              </div>
-
-              <div v-if="openTournament" class="tournament-toolbar">
-                <button type="button" class="btn ghost" @click="openTournamentSettingsModal">대회 설정 변경</button>
-                <button type="button" class="btn primary" @click="openMatchEntryModal">경기 결과 입력</button>
-              </div>
-
-              <div class="panel-grid two">
-                <article class="surface">
-                  <h3>참가자 / 예상 ELO</h3>
-                  <div class="table-shell">
-                    <table class="data-table">
-                      <thead>
-                        <tr>
-                          <th>시드</th>
-                          <th>선수</th>
-                          <th>시작 ELO</th>
-                          <th>누적 Δ</th>
-                          <th>예상 ELO</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="player in openTournamentParticipants" :key="'open-player-' + player.playerId">
-                          <td>#{{ player.seedRank }}</td>
-                          <td>{{ player.name }}</td>
-                          <td>{{ formatNum(player.seedElo) }}</td>
-                          <td :class="{ up: player.pendingDelta > 0, down: player.pendingDelta < 0 }">{{ formatSigned(player.pendingDelta) }}</td>
-                          <td>
-                            <div class="elo-cell">
-                              <strong>{{ formatNum(player.projectedElo) }}</strong>
-                              <small>ELO</small>
-                            </div>
-                          </td>
-                        </tr>
-                        <tr v-if="!openTournamentParticipants.length">
-                          <td colspan="5" class="empty-row">참가자 정보가 없습니다.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
                 </article>
 
-                <article class="surface">
-                  <h3>경기 목록</h3>
-                  <div class="card-list">
-                    <match-card
-                      v-for="match in openTournamentMatches"
-                      :key="'open-match-' + match.id"
-                      :match="match"
-                      :show-meta="false"
-                      :deletable="true"
-                      @delete="deleteMatch(match.id)"
-                    />
-                    <p v-if="!openTournamentMatches.length" class="empty-copy">아직 기록된 경기가 없습니다.</p>
-                  </div>
+                <div class="panel-grid two">
+                  <article class="surface">
+                    <h3>경기 목록</h3>
+                    <div class="card-list">
+                      <match-card
+                        v-for="match in openTournamentMatches"
+                        :key="'open-match-' + match.id"
+                        :match="match"
+                        :show-meta="false"
+                        :deletable="true"
+                        @delete="deleteMatch(match.id)"
+                      />
+                      <p v-if="!openTournamentMatches.length" class="empty-copy">아직 기록된 경기가 없습니다.</p>
+                    </div>
+                  </article>
 
-                  <div class="action-row">
-                    <button type="button" class="btn danger" :disabled="!openTournament" @click="cancelTournament">대회 취소</button>
-                    <button type="button" class="btn primary" :disabled="!openTournament" @click="finalizeTournament">대회 종료</button>
-                  </div>
-                </article>
-              </div>
+                  <article class="surface">
+                    <h3>참가자 / 예상 ELO</h3>
+                    <div class="table-shell">
+                      <table class="data-table">
+                        <thead>
+                          <tr>
+                            <th>시드</th>
+                            <th>선수</th>
+                            <th>시작 ELO</th>
+                            <th>누적 Δ</th>
+                            <th>예상 ELO</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="player in openTournamentParticipants" :key="'open-player-' + player.playerId">
+                            <td>#{{ player.seedRank }}</td>
+                            <td>{{ player.name }}</td>
+                            <td>{{ formatNum(player.seedElo) }}</td>
+                            <td :class="{ up: player.pendingDelta > 0, down: player.pendingDelta < 0 }">{{ formatSigned(player.pendingDelta) }}</td>
+                            <td>
+                              <div class="elo-cell">
+                                <strong>{{ formatNum(player.projectedElo) }}</strong>
+                                <small>ELO</small>
+                              </div>
+                            </td>
+                          </tr>
+                          <tr v-if="!openTournamentParticipants.length">
+                            <td colspan="5" class="empty-row">참가자 정보가 없습니다.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+                </div>
+
+                <div class="action-row tournament-end-actions">
+                  <button type="button" class="btn danger" :disabled="!openTournament" @click="cancelTournament">대회 취소</button>
+                  <button type="button" class="btn primary" :disabled="!openTournament" @click="finalizeTournament">대회 종료</button>
+                </div>
+              </template>
             </section>
 
             <section v-show="activeTab === 'records'" class="panel-group">
@@ -2209,6 +2273,53 @@ const app = createApp({
               </select>
             </label>
             <p v-if="openTournament.matches.length > 0" class="muted">이미 경기 기록이 있어 대회 종류는 변경할 수 없습니다.</p>
+
+            <div class="participant-box">
+              <div class="participant-head">
+                <span>참가자 편집</span>
+                <strong>{{ selectedTournamentEditParticipants.length }}명 선택</strong>
+              </div>
+
+              <input
+                v-model.trim="ui.tournamentEditParticipantQuery"
+                placeholder="선수 검색 후 Enter로 첫 결과 추가"
+                @keydown.enter.prevent="addFirstSearchedTournamentEditParticipant"
+              />
+
+              <div class="picker-actions">
+                <button type="button" class="btn ghost mini" @click="selectAllTournamentEditParticipants">전체 선택</button>
+                <button type="button" class="btn ghost mini" @click="clearTournamentEditParticipantSelection">선택 초기화</button>
+              </div>
+
+              <div class="selected-chip-wrap">
+                <button
+                  v-for="player in selectedTournamentEditParticipants"
+                  :key="'edit-picked-' + player.id"
+                  type="button"
+                  class="selected-chip"
+                  @click="toggleTournamentEditParticipant(player.id)"
+                >
+                  {{ player.name }}
+                </button>
+                <p v-if="!selectedTournamentEditParticipants.length" class="empty-copy">아직 선택된 참가자가 없습니다.</p>
+              </div>
+
+              <div class="pick-grid">
+                <button
+                  v-for="player in filteredTournamentEditParticipantPool"
+                  :key="'edit-pool-' + player.id"
+                  type="button"
+                  class="pick-item"
+                  :class="{ selected: isTournamentEditParticipantSelected(player.id) }"
+                  @click="toggleTournamentEditParticipant(player.id)"
+                >
+                  <span>{{ player.name }}</span>
+                  <small>{{ formatNum(player.currentElo) }}</small>
+                </button>
+              </div>
+
+              <p v-if="openTournament.matches.length > 0" class="muted">이미 경기한 선수는 제거할 수 없습니다.</p>
+            </div>
 
             <div class="modal-actions">
               <button type="button" class="btn ghost" @click="closeTournamentSettingsModal">취소</button>
