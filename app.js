@@ -220,6 +220,23 @@ const MatchCard = {
       if (this.winnerSide === "B") return "winner-b";
       return "draw";
     },
+    formatClass() {
+      return String(this.match?.matchFormat || "SINGLES").toUpperCase() === "DOUBLES" ? "format-doubles" : "format-singles";
+    },
+    tournamentTypeText() {
+      if (this.typeLabel) return this.typeLabel;
+      const raw = String(this.match?.tournamentType || "").toUpperCase();
+      if (raw === "REGULAR") return "정규";
+      if (raw === "ADHOC") return "상시";
+      if (raw === "FRIENDLY") return "친선";
+      return "-";
+    },
+    tournamentTitle() {
+      return String(this.match?.tournamentName || "").trim() || "Tournament";
+    },
+    isTournamentLinkable() {
+      return this.linkableTournament && toInt(this.match?.tournamentId, 0) > 0;
+    },
     teamAPlayers() {
       return this.splitTeamNames(this.match?.teamAName);
     },
@@ -261,12 +278,21 @@ const MatchCard = {
     },
   },
   template: `
-    <article class="match-card" :class="cardClass">
+    <article class="match-card" :class="[cardClass, formatClass]">
       <header class="match-card-head">
         <div class="match-head-top">
           <div class="match-head-left">
-            <span v-if="match.matchOrder != null" class="match-order">#{{ match.matchOrder }}</span>
-            <span class="match-format">{{ matchFormatLabel(match.matchFormat) }}</span>
+            <span class="match-order">
+              <span v-if="match.matchOrder != null">#{{ match.matchOrder }}</span>
+              <small class="order-type">{{ tournamentTypeText }}</small>
+            </span>
+            <button
+              v-if="isTournamentLinkable"
+              type="button"
+              class="inline-link match-format match-format-link"
+              @click="openTournament"
+            >{{ tournamentTitle }}</button>
+            <span v-else class="match-format">{{ tournamentTitle }}</span>
           </div>
           <div class="match-head-right">
             <span class="match-date">{{ match.tournamentDate || "-" }}</span>
@@ -274,23 +300,10 @@ const MatchCard = {
           </div>
         </div>
 
-        <div v-if="showMeta || match.tournamentName || typeLabel" class="match-meta-line">
-          <template v-if="match.tournamentName">
-            <button
-              v-if="linkableTournament && toInt(match.tournamentId, 0) > 0"
-              type="button"
-              class="inline-link meta-link"
-              @click="openTournament"
-            >{{ match.tournamentName }}</button>
-            <template v-else>{{ match.tournamentName }}</template>
-          </template>
-          <template v-else-if="showMeta">
-            <span>Match</span>
-          </template>
-          <template v-if="typeLabel">
-            <span class="meta-dot">&middot;</span>
-            <span>{{ typeLabel }}</span>
-          </template>
+        <div v-if="showMeta" class="match-meta-line">
+          <span class="meta-pill">{{ matchFormatLabel(match.matchFormat) }}</span>
+          <span class="meta-dot">&middot;</span>
+          <span>Score Result</span>
         </div>
       </header>
 
@@ -1822,6 +1835,7 @@ const app = createApp({
                         v-for="match in openTournamentMatches"
                         :key="'open-match-' + match.id"
                         :match="match"
+                        :type-label="tournamentTypeLabel(openTournament.tournamentType)"
                         :show-meta="false"
                         :deletable="true"
                         @delete="deleteMatch(match.id)"
@@ -1965,6 +1979,7 @@ const app = createApp({
                     v-for="match in recordTournament.matches"
                     :key="'record-match-' + match.id"
                     :match="match"
+                    :type-label="tournamentTypeLabel(recordTournament.tournamentType)"
                     :show-meta="false"
                     :show-player-links="true"
                     @open-player="jumpToPlayerByName"
@@ -2018,6 +2033,7 @@ const app = createApp({
                     v-for="match in playerRecentMatches"
                     :key="'player-match-' + match.matchId"
                     :match="match"
+                    :type-label="tournamentTypeLabel(match.tournamentType)"
                   />
                   <p v-if="!playerRecentMatches.length" class="empty-copy">경기 데이터가 없습니다.</p>
                 </div>
@@ -2460,6 +2476,7 @@ const app = createApp({
               v-for="match in playerMatchCards"
               :key="'player-modal-match-' + match.matchId"
               :match="match"
+              :type-label="tournamentTypeLabel(match.tournamentType)"
             />
             <p v-if="!playerMatchCards.length" class="empty-copy">경기 데이터가 없습니다.</p>
           </div>

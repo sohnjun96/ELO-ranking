@@ -1224,7 +1224,7 @@ select:focus {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: #1f3248;
@@ -1249,7 +1249,7 @@ select:focus {
 }
 
 .team-delta {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -1272,7 +1272,7 @@ select:focus {
   justify-content: center;
   border-left: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.56);
-  font-size: 39px;
+  font-size: 36px;
   font-weight: 600;
   letter-spacing: -0.03em;
   color: #7f8e9f;
@@ -1564,15 +1564,15 @@ select:focus {
   }
 
   .team-name {
-    font-size: 18px;
+    font-size: 17px;
   }
 
   .team-delta {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .team-score {
-    font-size: 30px;
+    font-size: 28px;
   }
 
   .kpi-grid {
