@@ -15,6 +15,16 @@ async function dbRun(db, sql, ...params) {
   return await db.prepare(sql).bind(...params).run();
 }
 
+function requireDb(env) {
+  const db = env?.DB;
+  if (!db || typeof db.prepare !== "function") {
+    throw new Error(
+      "D1 binding `DB` is missing. Set Pages > Settings > Functions > D1 database bindings (Production + Preview) with variable name `DB`."
+    );
+  }
+  return db;
+}
+
 function parseId(raw, label = "id") {
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`Invalid ${label}`);
@@ -1022,8 +1032,12 @@ async function route(request, env) {
 
   if (segments[0] === "health") {
     if (request.method !== "GET") return methodNotAllowed();
-    return json({ ok: true, now: new Date().toISOString() });
+    const db = requireDb(env);
+    await dbFirst(db, "SELECT 1 AS ready");
+    return json({ ok: true, now: new Date().toISOString(), db: "ready" });
   }
+
+  requireDb(env);
 
   if (segments[0] === "bootstrap") {
     if (request.method !== "GET") return methodNotAllowed();
