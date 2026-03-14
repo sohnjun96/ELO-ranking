@@ -1,4 +1,5 @@
 import { createApp } from "https://unpkg.com/vue@3.5.13/dist/vue.esm-browser.prod.js";
+import Chart from "https://cdn.jsdelivr.net/npm/chart.js@4.5.0/+esm";
 
 const TABS = [
   { id: "dashboard", label: "대시보드", desc: "랭킹 · 최근 경기" },
@@ -343,6 +344,11 @@ const app = createApp({
       modals: {
         matchEntry: false,
         tournamentSettings: false,
+        playerMatches: false,
+      },
+
+      charts: {
+        playerStats: null,
       },
 
       simResult: null,
@@ -485,6 +491,14 @@ const app = createApp({
     playerMatchCards() {
       const rows = this.playerStats?.matches || [];
       return rows.map((match) => normalizeMatch(match));
+    },
+
+    playerRecentMatches() {
+      return this.playerMatchCards.slice(0, 5);
+    },
+
+    hasMorePlayerMatches() {
+      return this.playerMatchCards.length > 5;
     },
   },
 
@@ -657,6 +671,96 @@ const app = createApp({
 
     closeTournamentSettingsModal() {
       this.modals.tournamentSettings = false;
+    },
+
+    openPlayerMatchesModal() {
+      if (!this.playerMatchCards.length) return;
+      this.modals.playerMatches = true;
+    },
+
+    closePlayerMatchesModal() {
+      this.modals.playerMatches = false;
+    },
+
+    destroyPlayerStatsChart() {
+      if (this.charts.playerStats) {
+        this.charts.playerStats.destroy();
+        this.charts.playerStats = null;
+      }
+    },
+
+    renderPlayerStatsChart() {
+      const canvas = this.$refs.playerStatsChart;
+      if (!canvas || !this.playerStats?.summary) {
+        this.destroyPlayerStatsChart();
+        return;
+      }
+
+      const summary = this.playerStats.summary;
+      const labels = ["전체", "단식", "복식"];
+      const matchCounts = [toInt(summary.total), toInt(summary.singlesTotal), toInt(summary.doublesTotal)];
+      const winRates = [toInt(summary.winRate), toInt(summary.singlesWinRate), toInt(summary.doublesWinRate)];
+
+      this.destroyPlayerStatsChart();
+      this.charts.playerStats = new Chart(canvas, {
+        data: {
+          labels,
+          datasets: [
+            {
+              type: "bar",
+              label: "경기 수",
+              data: matchCounts,
+              yAxisID: "y",
+              borderRadius: 8,
+              backgroundColor: ["#5f95ff", "#6bc7a0", "#f2b46c"],
+            },
+            {
+              type: "line",
+              label: "승률(%)",
+              data: winRates,
+              yAxisID: "y1",
+              tension: 0.32,
+              borderColor: "#2f3d52",
+              backgroundColor: "rgba(47, 61, 82, 0.18)",
+              pointRadius: 4,
+              pointHoverRadius: 5,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { position: "top" },
+            tooltip: { padding: 10 },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: "경기 수" },
+              ticks: { precision: 0 },
+              grid: { color: "rgba(64, 92, 130, 0.16)" },
+            },
+            y1: {
+              beginAtZero: true,
+              min: 0,
+              max: 100,
+              position: "right",
+              title: { display: true, text: "승률(%)" },
+              grid: { drawOnChartArea: false },
+            },
+            x: {
+              grid: { color: "rgba(64, 92, 130, 0.1)" },
+            },
+          },
+        },
+      });
+    },
+
+    schedulePlayerStatsChartRender() {
+      this.$nextTick(() => this.renderPlayerStatsChart());
     },
 
     async submitTournamentSettings() {
@@ -1054,6 +1158,7 @@ const app = createApp({
                 }))
               : [],
           };
+          this.schedulePlayerStatsChartRender();
         });
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "선수 기록 조회 실패", true);
@@ -1201,7 +1306,24 @@ const app = createApp({
 
     selectedPlayerId(newValue, oldValue) {
       if (newValue === oldValue) return;
+      this.modals.playerMatches = false;
       this.loadPlayerBySelection();
+    },
+
+    playerStats: {
+      handler() {
+        if (!this.playerStats) {
+          this.modals.playerMatches = false;
+        }
+        this.schedulePlayerStatsChartRender();
+      },
+      deep: false,
+    },
+
+    activeTab(newValue) {
+      if (newValue === "player") {
+        this.schedulePlayerStatsChartRender();
+      }
     },
 
     selectedAdminPlayer: {
@@ -1215,6 +1337,14 @@ const app = createApp({
 
   async mounted() {
     await this.refreshAll("초기 데이터를 불러오는 중...");
+  },
+
+  beforeUnmount() {
+    this.destroyPlayerStatsChart();
+    if (this.toast.timer) {
+      clearTimeout(this.toast.timer);
+      this.toast.timer = null;
+    }
   },
   template: `
     <div class="app-root">
@@ -1634,40 +1764,27 @@ const app = createApp({
                 </div>
               </article>
 
-              <div v-if="playerStats" class="panel-grid two">
-                <article class="surface">
-                  <h3>경기 기록</h3>
-                  <div class="card-list">
-                    <match-card
-                      v-for="match in playerMatchCards"
-                      :key="'player-match-' + match.matchId"
-                      :match="match"
-                    />
-                    <p v-if="!playerMatchCards.length" class="empty-copy">경기 데이터가 없습니다.</p>
-                  </div>
-                </article>
+              <article v-if="playerStats" class="surface">
+                <h3>경기 기록 통계</h3>
+                <div class="chart-wrap">
+                  <canvas ref="playerStatsChart"></canvas>
+                </div>
+              </article>
 
-                <article class="surface">
-                  <h3>상대 전적(단식)</h3>
-                  <div class="table-shell">
-                    <table class="data-table">
-                      <thead>
-                        <tr><th>상대</th><th>경기</th><th>승-패-무</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="opponent in playerStats.opponents" :key="'opponent-' + opponent.opponent">
-                          <td>{{ opponent.opponent }}</td>
-                          <td>{{ opponent.matches }}</td>
-                          <td>{{ opponent.wins }}-{{ opponent.losses }}-{{ opponent.draws }}</td>
-                        </tr>
-                        <tr v-if="!playerStats.opponents.length">
-                          <td colspan="3" class="empty-row">상대 전적 데이터가 없습니다.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </article>
-              </div>
+              <article v-if="playerStats" class="surface">
+                <header class="surface-head">
+                  <h3>최근 경기 기록</h3>
+                  <button v-if="hasMorePlayerMatches" type="button" class="btn ghost mini" @click="openPlayerMatchesModal">전체 보기</button>
+                </header>
+                <div class="card-list">
+                  <match-card
+                    v-for="match in playerRecentMatches"
+                    :key="'player-match-' + match.matchId"
+                    :match="match"
+                  />
+                  <p v-if="!playerRecentMatches.length" class="empty-copy">경기 데이터가 없습니다.</p>
+                </div>
+              </article>
 
               <article v-if="playerStats" class="surface">
                 <h3>ELO 이력</h3>
@@ -1691,6 +1808,27 @@ const app = createApp({
                       </tr>
                       <tr v-if="!playerStats.events.length">
                         <td colspan="4" class="empty-row">ELO 이벤트가 없습니다.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article v-if="playerStats" class="surface compact-surface">
+                <h3>상대 전적(단식)</h3>
+                <div class="table-shell compact-table">
+                  <table class="data-table">
+                    <thead>
+                      <tr><th>상대</th><th>경기</th><th>승-패-무</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="opponent in playerStats.opponents" :key="'opponent-' + opponent.opponent">
+                        <td>{{ opponent.opponent }}</td>
+                        <td>{{ opponent.matches }}</td>
+                        <td>{{ opponent.wins }}-{{ opponent.losses }}-{{ opponent.draws }}</td>
+                      </tr>
+                      <tr v-if="!playerStats.opponents.length">
+                        <td colspan="3" class="empty-row">상대 전적 데이터가 없습니다.</td>
                       </tr>
                     </tbody>
                   </table>
@@ -1979,6 +2117,31 @@ const app = createApp({
               <button type="submit" class="btn primary">경기 추가</button>
             </div>
           </form>
+        </div>
+      </div>
+
+      <div
+        v-if="modals.playerMatches && playerStats"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closePlayerMatchesModal"
+      >
+        <div class="modal-card wide">
+          <header class="modal-head">
+            <h3>{{ playerStats.player.name }} 전체 경기 기록</h3>
+            <button type="button" class="modal-close" @click="closePlayerMatchesModal">닫기</button>
+          </header>
+
+          <p class="muted">총 {{ playerMatchCards.length }}경기</p>
+          <div class="card-list modal-card-list">
+            <match-card
+              v-for="match in playerMatchCards"
+              :key="'player-modal-match-' + match.matchId"
+              :match="match"
+            />
+            <p v-if="!playerMatchCards.length" class="empty-copy">경기 데이터가 없습니다.</p>
+          </div>
         </div>
       </div>
 
