@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS app_settings (
 INSERT OR IGNORE INTO app_settings (key, value, updated_at)
 VALUES ('club_name', 'OO 테니스 동호회', datetime('now'));
 
+INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+VALUES ('club_logo_data_url', '', datetime('now'));
+
 CREATE TABLE IF NOT EXISTS tournament_participants (
   tournament_id INTEGER NOT NULL,
   player_id INTEGER NOT NULL,

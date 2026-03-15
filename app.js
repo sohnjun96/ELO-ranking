@@ -21,6 +21,7 @@ const TAB_PATHS = {
 
 const DEFAULT_APP_SETTINGS = {
   clubName: "OO 테니스 동호회",
+  clubLogoDataUrl: "",
 };
 
 function normalizePathname(pathname) {
@@ -65,6 +66,13 @@ function formatDateTime(value, includeYear = false) {
 
 function normalizeSearch(value) {
   return String(value || "").toLowerCase().replace(/\s+/g, "").trim();
+}
+
+function normalizeLogoDataUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (!/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i.test(raw)) return "";
+  return raw;
 }
 
 function matchFormatLabel(format) {
@@ -437,6 +445,7 @@ const app = createApp({
         ADHOC: { kFactor: 100, basePoints: 1 },
         FRIENDLY: { kFactor: 0, basePoints: 0 },
       },
+      adminOverview: null,
       adminPlayers: [],
       selectedAdminPlayerId: "",
 
@@ -451,6 +460,7 @@ const app = createApp({
         playerQuery: "",
         adminQuery: "",
         adminStatus: "ALL",
+        adminSelectedIds: [],
         recordMenuOpen: false,
         isMobile: false,
         desktopSidebarOpen: true,
@@ -476,7 +486,10 @@ const app = createApp({
         simBscore: 4,
         adminRename: "",
         adminElo: null,
+        adminEloNote: "",
         clubName: DEFAULT_APP_SETTINGS.clubName,
+        clubLogoDataUrl: "",
+        clubLogoFileName: "",
         tournamentEditName: "",
         tournamentEditDate: "",
         tournamentEditType: "REGULAR",
@@ -511,6 +524,18 @@ const app = createApp({
 
     isRecordsGroupActive() {
       return this.activeTab === "records" || this.activeTab === "player";
+    },
+
+    brandLogoSrc() {
+      return normalizeLogoDataUrl(this.appSettings?.clubLogoDataUrl) || "/logo.svg";
+    },
+
+    clubLogoPreviewSrc() {
+      return normalizeLogoDataUrl(this.forms.clubLogoDataUrl) || this.brandLogoSrc;
+    },
+
+    hasCustomClubLogo() {
+      return Boolean(normalizeLogoDataUrl(this.appSettings?.clubLogoDataUrl));
     },
 
     activeRules() {
@@ -686,6 +711,22 @@ const app = createApp({
       return this.adminPlayers.find((player) => player.id === id) || null;
     },
 
+    adminSelectedSet() {
+      return new Set(this.ui.adminSelectedIds.map((id) => toInt(id)).filter((id) => id > 0));
+    },
+
+    selectedAdminCount() {
+      return this.adminSelectedSet.size;
+    },
+
+    hasActiveSelectedAdmins() {
+      return this.adminPlayers.some((player) => this.adminSelectedSet.has(player.id) && player.isActive);
+    },
+
+    hasInactiveSelectedAdmins() {
+      return this.adminPlayers.some((player) => this.adminSelectedSet.has(player.id) && !player.isActive);
+    },
+
     playerMatchCards() {
       const rows = this.playerStats?.matches || [];
       return rows.map((match) => normalizeMatch(match));
@@ -716,6 +757,18 @@ const app = createApp({
       if (status === "FINALIZED") return "active";
       if (status === "CANCELED") return "inactive";
       return "";
+    },
+
+    rankMedal(rank) {
+      const value = toInt(rank, 0);
+      if (value === 1) return "🥇";
+      if (value === 2) return "🥈";
+      if (value === 3) return "🥉";
+      return "";
+    },
+
+    adminStatusLabel(isActive) {
+      return isActive ? "활성" : "비활성";
     },
 
     toggleSidebar() {},
@@ -811,6 +864,28 @@ const app = createApp({
       if (id <= 0) return;
       this.selectedRecordTournamentId = String(id);
       this.navigateToTab("records");
+    },
+
+    isAdminSelected(playerId) {
+      return this.adminSelectedSet.has(toInt(playerId));
+    },
+
+    toggleAdminSelection(playerId) {
+      const id = toInt(playerId, 0);
+      if (id <= 0) return;
+      if (this.isAdminSelected(id)) {
+        this.ui.adminSelectedIds = this.ui.adminSelectedIds.filter((pickedId) => toInt(pickedId) !== id);
+        return;
+      }
+      this.ui.adminSelectedIds = [...this.ui.adminSelectedIds.map((pickedId) => toInt(pickedId)), id];
+    },
+
+    clearAdminSelection() {
+      this.ui.adminSelectedIds = [];
+    },
+
+    selectAllFilteredAdminPlayers() {
+      this.ui.adminSelectedIds = this.filteredAdminPlayers.map((player) => toInt(player.id));
     },
 
     showToast(message, isError = false) {
@@ -1290,7 +1365,7 @@ const app = createApp({
       try {
         await this.withLoading("대회 설정을 저장하는 중...", async () => {
           await requestApi(`/api/tournaments/${this.openTournament.id}`, "PATCH", payload);
-          await Promise.all([this.refreshBootstrap(), this.refreshTournaments()]);
+          await Promise.all([this.refreshBootstrap(), this.refreshTournaments(), this.refreshAdminPlayers(), this.refreshAdminOverview()]);
           this.lastSyncedAt = new Date().toISOString();
         });
         this.modals.tournamentSettings = false;
@@ -1311,6 +1386,7 @@ const app = createApp({
         ...(data?.appSettings || {}),
       };
       this.forms.clubName = this.appSettings.clubName;
+      this.clearPendingClubLogo();
 
       this.syncParticipantSelection();
       this.syncMatchSelectDefaults();
@@ -1359,7 +1435,17 @@ const app = createApp({
           this.selectedAdminPlayerId = this.adminPlayers.length ? String(this.adminPlayers[0].id) : "";
         }
       }
-    },    async refreshAll(message = "전체 데이터를 동기화하는 중...") {
+
+      const valid = new Set(this.adminPlayers.map((player) => toInt(player.id)));
+      this.ui.adminSelectedIds = this.ui.adminSelectedIds.map((id) => toInt(id)).filter((id) => valid.has(id));
+    },
+
+    async refreshAdminOverview() {
+      const data = await requestApi("/api/admin/overview");
+      this.adminOverview = data?.overview || null;
+    },
+
+    async refreshAll(message = "전체 데이터를 동기화하는 중...") {
       try {
         await this.withLoading(message, async () => {
           await this.checkHealth();
@@ -1368,6 +1454,7 @@ const app = createApp({
             this.refreshTournaments(),
             this.refreshOverview(),
             this.refreshAdminPlayers(),
+            this.refreshAdminOverview(),
           ]);
           this.lastSyncedAt = new Date().toISOString();
         });
@@ -1422,7 +1509,7 @@ const app = createApp({
         await this.withLoading("선수를 등록하는 중...", async () => {
           await requestApi("/api/players", "POST", { name });
           this.forms.playerName = "";
-          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview(), this.refreshAdminOverview()]);
           this.lastSyncedAt = new Date().toISOString();
         });
         this.showToast("선수를 등록했습니다.");
@@ -1462,6 +1549,7 @@ const app = createApp({
             this.refreshTournaments(),
             this.refreshOverview(),
             this.refreshAdminPlayers(),
+            this.refreshAdminOverview(),
           ]);
           this.lastSyncedAt = new Date().toISOString();
           this.navigateToTab("tournament", { replace: true });
@@ -1582,6 +1670,7 @@ const app = createApp({
             this.refreshTournaments(),
             this.refreshOverview(),
             this.refreshAdminPlayers(),
+            this.refreshAdminOverview(),
           ]);
           this.lastSyncedAt = new Date().toISOString();
         });
@@ -1605,6 +1694,7 @@ const app = createApp({
             this.refreshTournaments(),
             this.refreshOverview(),
             this.refreshAdminPlayers(),
+            this.refreshAdminOverview(),
           ]);
           this.lastSyncedAt = new Date().toISOString();
         });
@@ -1748,6 +1838,97 @@ const app = createApp({
       }
     },
 
+    clearPendingClubLogo() {
+      this.forms.clubLogoDataUrl = "";
+      this.forms.clubLogoFileName = "";
+      if (this.$refs.clubLogoFileInput) {
+        this.$refs.clubLogoFileInput.value = "";
+      }
+    },
+
+    handleClubLogoFileChange(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) {
+        this.clearPendingClubLogo();
+        return;
+      }
+
+      if (!String(file.type || "").startsWith("image/")) {
+        this.showToast("이미지 파일만 업로드할 수 있습니다.", true);
+        this.clearPendingClubLogo();
+        return;
+      }
+
+      const maxBytes = 1024 * 1024;
+      if (Number(file.size || 0) > maxBytes) {
+        this.showToast("로고 파일은 1MB 이하만 업로드할 수 있습니다.", true);
+        this.clearPendingClubLogo();
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const normalized = normalizeLogoDataUrl(reader.result);
+        if (!normalized) {
+          this.showToast("지원하지 않는 로고 파일 형식입니다.", true);
+          this.clearPendingClubLogo();
+          return;
+        }
+        this.forms.clubLogoDataUrl = normalized;
+        this.forms.clubLogoFileName = String(file.name || "");
+      };
+      reader.onerror = () => {
+        this.showToast("로고 파일을 읽는 중 오류가 발생했습니다.", true);
+        this.clearPendingClubLogo();
+      };
+      reader.readAsDataURL(file);
+    },
+
+    async saveClubLogo() {
+      const clubLogoDataUrl = normalizeLogoDataUrl(this.forms.clubLogoDataUrl);
+      if (!clubLogoDataUrl) {
+        this.showToast("먼저 업로드할 로고 파일을 선택해 주세요.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("클럽 로고를 저장하는 중...", async () => {
+          const data = await requestApi("/api/admin/settings", "PATCH", { clubLogoDataUrl });
+          this.appSettings = {
+            ...DEFAULT_APP_SETTINGS,
+            ...(data?.settings || {}),
+          };
+          this.clearPendingClubLogo();
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("클럽 로고를 저장했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "클럽 로고 저장 실패", true);
+      }
+    },
+
+    async resetClubLogo() {
+      if (!this.hasCustomClubLogo) {
+        this.showToast("이미 기본 로고가 적용되어 있습니다.");
+        return;
+      }
+
+      try {
+        await this.withLoading("기본 로고로 복원하는 중...", async () => {
+          const data = await requestApi("/api/admin/settings", "PATCH", { clubLogoDataUrl: "" });
+          this.appSettings = {
+            ...DEFAULT_APP_SETTINGS,
+            ...(data?.settings || {}),
+          };
+          this.clearPendingClubLogo();
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("기본 로고로 복원했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "기본 로고 복원 실패", true);
+      }
+    },
+
     async renameAdminPlayer() {
       if (!this.selectedAdminPlayer) {
         this.showToast("관리할 선수를 선택하세요.", true);
@@ -1762,7 +1943,7 @@ const app = createApp({
       try {
         await this.withLoading("선수 이름을 변경하는 중...", async () => {
           await requestApi(`/api/admin/players/${this.selectedAdminPlayer.id}`, "PATCH", { name });
-          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview(), this.refreshAdminOverview()]);
           this.lastSyncedAt = new Date().toISOString();
         });
         this.showToast("선수 이름을 변경했습니다.");
@@ -1786,34 +1967,99 @@ const app = createApp({
         return;
       }
 
+      const note = String(this.forms.adminEloNote || "").trim();
+      const payload = { currentElo };
+      if (note) payload.note = note;
+
       try {
         await this.withLoading("ELO를 조정하는 중...", async () => {
-          await requestApi(`/api/admin/players/${this.selectedAdminPlayer.id}`, "PATCH", { currentElo });
-          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+          await requestApi(`/api/admin/players/${this.selectedAdminPlayer.id}`, "PATCH", payload);
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview(), this.refreshAdminOverview()]);
           this.lastSyncedAt = new Date().toISOString();
         });
+        this.forms.adminEloNote = "";
         this.showToast("선수 ELO를 조정했습니다.");
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "ELO 조정 실패", true);
       }
     },
 
-    async deleteAdminPlayer() {
-      if (!this.selectedAdminPlayer) {
+    async setAdminPlayerActive(player, isActive, options = {}) {
+      if (!player) {
         this.showToast("관리할 선수를 선택하세요.", true);
-        return;
+        return false;
       }
-      if (!window.confirm("선수를 비활성화할까요?")) return;
-
+      const { confirmMessage = "", loadingMessage = "상태를 변경하는 중...", successMessage = "상태를 변경했습니다." } = options;
+      if (confirmMessage && !window.confirm(confirmMessage)) return false;
       try {
-        await this.withLoading("선수를 비활성화하는 중...", async () => {
-          await requestApi(`/api/admin/players/${this.selectedAdminPlayer.id}`, "DELETE");
-          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview()]);
+        await this.withLoading(loadingMessage, async () => {
+          await requestApi(`/api/admin/players/${player.id}`, "PATCH", { isActive });
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview(), this.refreshAdminOverview()]);
           this.lastSyncedAt = new Date().toISOString();
         });
-        this.showToast("선수를 비활성화했습니다.");
+        this.showToast(successMessage);
+        return true;
       } catch (error) {
-        this.showToast(error instanceof Error ? error.message : "선수 삭제 실패", true);
+        this.showToast(error instanceof Error ? error.message : "상태 변경 실패", true);
+        return false;
+      }
+    },
+
+    async activateAdminPlayer() {
+      await this.setAdminPlayerActive(this.selectedAdminPlayer, true, {
+        loadingMessage: "선수를 활성화하는 중...",
+        successMessage: "선수를 활성화했습니다.",
+      });
+    },
+
+    async deactivateAdminPlayer() {
+      await this.setAdminPlayerActive(this.selectedAdminPlayer, false, {
+        confirmMessage: "선수를 비활성화할까요?",
+        loadingMessage: "선수를 비활성화하는 중...",
+        successMessage: "선수를 비활성화했습니다.",
+      });
+    },
+
+    async deleteAdminPlayer() {
+      await this.deactivateAdminPlayer();
+    },
+
+    async toggleAdminPlayerActive(player) {
+      if (!player) return;
+      if (player.isActive) {
+        await this.setAdminPlayerActive(player, false, {
+          confirmMessage: `${player.name} 선수를 비활성화할까요?`,
+          loadingMessage: "선수를 비활성화하는 중...",
+          successMessage: "선수를 비활성화했습니다.",
+        });
+        return;
+      }
+      await this.setAdminPlayerActive(player, true, {
+        loadingMessage: "선수를 활성화하는 중...",
+        successMessage: "선수를 활성화했습니다.",
+      });
+    },
+
+    async bulkSetAdminStatus(isActive) {
+      const playerIds = [...this.adminSelectedSet];
+      if (!playerIds.length) {
+        this.showToast("일괄 처리할 선수를 선택하세요.", true);
+        return;
+      }
+
+      const actionLabel = isActive ? "활성화" : "비활성화";
+      if (!window.confirm(`선택한 ${playerIds.length}명을 ${actionLabel}할까요?`)) return;
+
+      try {
+        await this.withLoading(`선택 선수 ${actionLabel} 처리 중...`, async () => {
+          await requestApi("/api/admin/players/bulk", "POST", { playerIds, isActive });
+          await Promise.all([this.refreshBootstrap(), this.refreshAdminPlayers(), this.refreshOverview(), this.refreshAdminOverview()]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.clearAdminSelection();
+        this.showToast(`${playerIds.length}명 ${actionLabel} 처리 완료`);
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : `일괄 ${actionLabel} 실패`, true);
       }
     },
   },
@@ -1882,6 +2128,7 @@ const app = createApp({
       handler(player) {
         this.forms.adminRename = player?.name || "";
         this.forms.adminElo = player ? toInt(player.currentElo) : null;
+        this.forms.adminEloNote = "";
       },
       immediate: true,
     },
@@ -1927,7 +2174,7 @@ const app = createApp({
             @click.prevent="setActiveTab('dashboard')"
             aria-label="대시보드로 이동"
           >
-            <img class="brand-logo" src="/logo.svg" alt="동호회 로고" />
+            <img class="brand-logo" :src="brandLogoSrc" alt="동호회 로고" />
             <div class="brand-copy">
               <p class="brand-overline">ELO RANKING SYSTEM</p>
               <h1>{{ appSettings.clubName }}</h1>
@@ -2020,7 +2267,12 @@ const app = createApp({
                     </thead>
                     <tbody>
                       <tr v-for="player in dashboardRankingPlayers" :key="'rank-' + player.id">
-                        <td>#{{ player.rank }}</td>
+                        <td>
+                          <span class="rank-cell">
+                            <span v-if="rankMedal(player.rank)" class="rank-medal" :class="'top-' + player.rank">{{ rankMedal(player.rank) }}</span>
+                            <span v-else>#{{ player.rank }}</span>
+                          </span>
+                        </td>
                         <td>
                           <button type="button" class="inline-link table-link" @click="jumpToPlayerById(player.id)">
                             {{ player.name }}
@@ -2129,7 +2381,6 @@ const app = createApp({
                           @click="toggleParticipant(player.id)"
                         >
                           <span>{{ player.name }}</span>
-                          <small>{{ formatNum(player.currentElo) }}</small>
                         </button>
                       </div>
                     </div>
@@ -2390,7 +2641,13 @@ const app = createApp({
                 <h3>{{ playerStats.player.name }} 기록 요약</h3>
                 <div class="summary-stat-grid player-summary">
                   <div><strong>{{ formatNum(playerStats.player.currentElo) }}</strong><small>ELO</small></div>
-                  <div><strong>#{{ playerStats.player.rank }}</strong><small>현재 순위</small></div>
+                  <div>
+                    <strong class="rank-cell">
+                      <span v-if="rankMedal(playerStats.player.rank)" class="rank-medal" :class="'top-' + playerStats.player.rank">{{ rankMedal(playerStats.player.rank) }}</span>
+                      <span v-else>#{{ playerStats.player.rank }}</span>
+                    </strong>
+                    <small>현재 순위</small>
+                  </div>
                   <div><strong>{{ playerStats.summary.wins }}승 {{ playerStats.summary.losses }}패 {{ playerStats.summary.draws }}무</strong><small>전체 전적</small></div>
                   <div><strong>{{ playerStats.summary.winRate }}%</strong><small>전체 승률</small></div>
                   <div><strong>{{ playerStats.summary.singlesWinRate }}%</strong><small>단식 승률</small></div>
@@ -2505,7 +2762,12 @@ const app = createApp({
                       </thead>
                       <tbody>
                         <tr v-for="player in overview.topPlayers.slice(0, 20)" :key="'top-' + player.id">
-                          <td>#{{ player.rank }}</td>
+                          <td>
+                            <span class="rank-cell">
+                              <span v-if="rankMedal(player.rank)" class="rank-medal" :class="'top-' + player.rank">{{ rankMedal(player.rank) }}</span>
+                              <span v-else>#{{ player.rank }}</span>
+                            </span>
+                          </td>
                           <td>{{ player.name }}</td>
                           <td>{{ formatNum(player.currentElo) }}</td>
                         </tr>
@@ -2555,6 +2817,59 @@ const app = createApp({
                   <input v-model.trim="forms.clubName" placeholder="클럽명 입력" required />
                   <button type="submit" class="btn primary">저장</button>
                 </form>
+                <div class="logo-admin-wrap">
+                  <div class="logo-admin-block">
+                    <small class="muted">현재 로고</small>
+                    <img class="admin-logo-preview" :src="brandLogoSrc" alt="현재 로고" />
+                  </div>
+                  <div class="logo-admin-block">
+                    <label class="logo-file-label">
+                      <span>로고 파일 업로드</span>
+                      <input
+                        ref="clubLogoFileInput"
+                        type="file"
+                        accept=".svg,image/svg+xml,image/png,image/jpeg,image/webp,image/gif"
+                        @change="handleClubLogoFileChange"
+                      />
+                    </label>
+                    <p class="muted">SVG/PNG/JPG/WEBP/GIF, 1MB 이하</p>
+                    <p v-if="forms.clubLogoFileName" class="muted">선택됨: {{ forms.clubLogoFileName }}</p>
+                    <div class="inline-form">
+                      <button type="button" class="btn primary mini" :disabled="!forms.clubLogoDataUrl" @click="saveClubLogo">로고 저장</button>
+                      <button type="button" class="btn ghost mini" :disabled="!forms.clubLogoDataUrl" @click="clearPendingClubLogo">선택 취소</button>
+                      <button type="button" class="btn ghost mini" :disabled="!hasCustomClubLogo" @click="resetClubLogo">기본 로고</button>
+                    </div>
+                    <div v-if="forms.clubLogoDataUrl" class="logo-admin-block pending">
+                      <small class="muted">업로드 미리보기</small>
+                      <img class="admin-logo-preview" :src="clubLogoPreviewSrc" alt="업로드 로고 미리보기" />
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="surface" v-if="adminOverview">
+                <h3>관리 요약</h3>
+                <div class="admin-kpi-grid">
+                  <div class="admin-kpi-card">
+                    <span>총 선수</span>
+                    <strong>{{ adminOverview.totalPlayers }}</strong>
+                  </div>
+                  <div class="admin-kpi-card">
+                    <span>활성 / 비활성</span>
+                    <strong>{{ adminOverview.activePlayers }} / {{ adminOverview.inactivePlayers }}</strong>
+                  </div>
+                  <div class="admin-kpi-card">
+                    <span>진행중 대회 참여</span>
+                    <strong>{{ adminOverview.inOpenPlayers }}</strong>
+                  </div>
+                  <div class="admin-kpi-card">
+                    <span>활성 평균 ELO</span>
+                    <strong>{{ formatNum(adminOverview.avgActiveElo) }}</strong>
+                  </div>
+                </div>
+                <p class="muted" v-if="adminOverview.lastAdjustmentAt">
+                  최근 점수 조정: {{ formatDateTime(adminOverview.lastAdjustmentAt, true) }}
+                </p>
               </article>
 
               <div class="panel-grid two">
@@ -2584,7 +2899,7 @@ const app = createApp({
                     <label>관리 대상
                       <select v-model="selectedAdminPlayerId">
                         <option v-for="player in adminPlayers" :key="'admin-select-' + player.id" :value="String(player.id)">
-                          {{ player.name }} ({{ player.isActive ? '활성' : '비활성' }})
+                          {{ player.name }} ({{ adminStatusLabel(player.isActive) }})
                         </option>
                       </select>
                     </label>
@@ -2592,7 +2907,8 @@ const app = createApp({
                     <div v-if="selectedAdminPlayer" class="admin-meta">
                       <strong>{{ selectedAdminPlayer.name }}</strong>
                       <span>ELO {{ formatNum(selectedAdminPlayer.currentElo) }}</span>
-                      <span>상태: {{ selectedAdminPlayer.isActive ? '활성' : '비활성' }}</span>
+                      <span>상태: {{ adminStatusLabel(selectedAdminPlayer.isActive) }}</span>
+                      <span>진행중 대회 참여: {{ selectedAdminPlayer.inOpenTournament ? '예' : '아니오' }}</span>
                     </div>
 
                     <form class="inline-form" @submit.prevent="renameAdminPlayer">
@@ -2600,12 +2916,19 @@ const app = createApp({
                       <button type="submit" class="btn primary">이름 변경</button>
                     </form>
 
-                    <form class="inline-form" @submit.prevent="adjustAdminElo">
-                      <input v-model.number="forms.adminElo" type="number" min="0" placeholder="새 ELO" />
-                      <button type="submit" class="btn ghost">점수 조정</button>
+                    <form class="stack-form" @submit.prevent="adjustAdminElo">
+                      <div class="inline-form">
+                        <input v-model.number="forms.adminElo" type="number" min="0" placeholder="새 ELO" />
+                        <input v-model.trim="forms.adminEloNote" placeholder="조정 사유 (선택)" />
+                        <button type="submit" class="btn ghost">점수 조정</button>
+                      </div>
                     </form>
 
-                    <button type="button" class="btn danger" @click="deleteAdminPlayer">선수 삭제(비활성화)</button>
+                    <div class="admin-actions-row">
+                      <button type="button" class="btn primary" :disabled="!selectedAdminPlayer || selectedAdminPlayer.isActive" @click="activateAdminPlayer">활성화</button>
+                      <button type="button" class="btn danger" :disabled="!selectedAdminPlayer || !selectedAdminPlayer.isActive" @click="deactivateAdminPlayer">비활성화</button>
+                      <button type="button" class="btn ghost" :disabled="!selectedAdminPlayer" @click="selectedAdminPlayer && jumpToPlayerById(selectedAdminPlayer.id)">선수 기록 보기</button>
+                    </div>
                   </div>
                 </article>
               </div>
@@ -2620,40 +2943,84 @@ const app = createApp({
                       <option value="ACTIVE">활성</option>
                       <option value="INACTIVE">비활성</option>
                     </select>
+                    <button type="button" class="btn ghost mini" :disabled="!filteredAdminPlayers.length" @click="selectAllFilteredAdminPlayers">검색결과 전체 선택</button>
+                    <button type="button" class="btn ghost mini" :disabled="!selectedAdminCount" @click="clearAdminSelection">선택 해제</button>
                   </div>
                 </header>
 
+                <div class="bulk-toolbar">
+                  <strong>선택 {{ selectedAdminCount }}명</strong>
+                  <div class="inline-form">
+                    <button
+                      type="button"
+                      class="btn primary mini"
+                      :disabled="!selectedAdminCount || !hasInactiveSelectedAdmins"
+                      @click="bulkSetAdminStatus(true)"
+                    >
+                      선택 활성화
+                    </button>
+                    <button
+                      type="button"
+                      class="btn danger mini"
+                      :disabled="!selectedAdminCount || !hasActiveSelectedAdmins"
+                      @click="bulkSetAdminStatus(false)"
+                    >
+                      선택 비활성화
+                    </button>
+                  </div>
+                </div>
+
                 <div class="table-shell">
-                  <table class="data-table">
-                    <thead>
-                      <tr>
-                        <th>선수</th>
-                        <th>ELO / 점수</th>
-                        <th>상태</th>
-                        <th>진행중 대회</th>
-                        <th>누적 경기</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="player in filteredAdminPlayers" :key="'admin-table-' + player.id">
-                        <td>{{ player.name }}</td>
-                        <td>
-                          <div class="elo-cell">
-                            <strong>{{ formatNum(player.currentElo) }}</strong>
-                            <small>ELO</small>
-                          </div>
-                        </td>
-                        <td>
-                          <span class="status-chip" :class="player.isActive ? 'active' : 'inactive'">{{ player.isActive ? '활성' : '비활성' }}</span>
-                        </td>
-                        <td>{{ player.inOpenTournament ? '예' : '아니오' }}</td>
-                        <td>{{ player.matchCount }}</td>
-                      </tr>
-                      <tr v-if="!filteredAdminPlayers.length">
-                        <td colspan="5" class="empty-row">검색 결과가 없습니다.</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>선택</th>
+                          <th>선수</th>
+                          <th>ELO / 점수</th>
+                          <th>상태</th>
+                          <th>진행중 대회</th>
+                          <th>누적 경기</th>
+                          <th>작업</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="player in filteredAdminPlayers" :key="'admin-table-' + player.id" :class="{ 'row-selected': isAdminSelected(player.id) }">
+                          <td class="checkbox-cell">
+                            <input
+                              type="checkbox"
+                              :checked="isAdminSelected(player.id)"
+                              :aria-label="player.name + ' 선택'"
+                              @change="toggleAdminSelection(player.id)"
+                            />
+                          </td>
+                          <td>
+                            <button type="button" class="inline-link table-link" @click="selectedAdminPlayerId = String(player.id)">
+                              {{ player.name }}
+                            </button>
+                          </td>
+                          <td>
+                            <div class="elo-cell">
+                              <strong>{{ formatNum(player.currentElo) }}</strong>
+                              <small>ELO</small>
+                            </div>
+                          </td>
+                          <td>
+                            <span class="status-chip" :class="player.isActive ? 'active' : 'inactive'">{{ adminStatusLabel(player.isActive) }}</span>
+                          </td>
+                          <td>{{ player.inOpenTournament ? '예' : '아니오' }}</td>
+                          <td>{{ player.matchCount }}</td>
+                          <td class="table-actions">
+                            <button type="button" class="btn ghost mini" @click="selectedAdminPlayerId = String(player.id)">선택</button>
+                            <button type="button" class="btn mini" :class="player.isActive ? 'danger' : 'primary'" @click="toggleAdminPlayerActive(player)">
+                              {{ player.isActive ? '비활성화' : '활성화' }}
+                            </button>
+                          </td>
+                        </tr>
+                        <tr v-if="!filteredAdminPlayers.length">
+                          <td colspan="7" class="empty-row">검색 결과가 없습니다.</td>
+                        </tr>
+                      </tbody>
+                    </table>
                 </div>
               </article>
             </section>
@@ -2764,7 +3131,6 @@ const app = createApp({
                   @click="toggleTournamentEditParticipant(player.id)"
                 >
                   <span>{{ player.name }}</span>
-                  <small>{{ formatNum(player.currentElo) }}</small>
                 </button>
               </div>
 

@@ -60,6 +60,24 @@ function normalizeStatus(raw) {
   return ["OPEN", "FINALIZED", "CANCELED"].includes(value) ? value : null;
 }
 
+const LOGO_DATA_URL_RE = /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i;
+const MAX_LOGO_DATA_URL_LENGTH = 1_400_000;
+
+function sanitizeLogoDataUrl(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (value.length > MAX_LOGO_DATA_URL_LENGTH) return "";
+  return LOGO_DATA_URL_RE.test(value) ? value : "";
+}
+
+function validateLogoDataUrl(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  assert(value.length <= MAX_LOGO_DATA_URL_LENGTH, "clubLogoDataUrl is too large");
+  assert(LOGO_DATA_URL_RE.test(value), "clubLogoDataUrl must be a valid image data URL");
+  return value;
+}
+
 async function ensureTournamentRules(db) {
   await dbRun(
     db,
@@ -123,28 +141,56 @@ async function ensureAppSettings(db) {
     `INSERT OR IGNORE INTO app_settings (key, value, updated_at)
     VALUES ('club_name', 'OO 테니스 동호회', datetime('now'))`
   );
+
+  await dbRun(
+    db,
+    `INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+    VALUES ('club_logo_data_url', '', datetime('now'))`
+  );
 }
 
 async function getAppSettings(db) {
   await ensureAppSettings(db);
-  const row = await dbFirst(db, `SELECT value FROM app_settings WHERE key='club_name'`);
+  const rows = await dbAll(
+    db,
+    `SELECT key, value
+     FROM app_settings
+     WHERE key IN ('club_name', 'club_logo_data_url')`
+  );
+  const settings = new Map(rows.map((row) => [String(row.key || ""), String(row.value || "")]));
   return {
-    clubName: String(row?.value || "OO 테니스 동호회"),
+    clubName: String(settings.get("club_name") || "OO 테니스 동호회"),
+    clubLogoDataUrl: sanitizeLogoDataUrl(settings.get("club_logo_data_url")),
   };
 }
 
 async function updateAppSettings(db, body) {
   await ensureAppSettings(db);
-  const clubName = String(body?.clubName || "").trim();
-  assert(clubName.length > 0, "clubName is required");
+  const updates = [];
 
-  await dbRun(
-    db,
-    `UPDATE app_settings
-     SET value=?, updated_at=datetime('now')
-     WHERE key='club_name'`,
-    clubName
-  );
+  if (body?.clubName != null) {
+    const clubName = String(body.clubName || "").trim();
+    assert(clubName.length > 0, "clubName cannot be empty");
+    updates.push(["club_name", clubName]);
+  }
+
+  if (body?.clubLogoDataUrl != null) {
+    const clubLogoDataUrl = validateLogoDataUrl(body.clubLogoDataUrl);
+    updates.push(["club_logo_data_url", clubLogoDataUrl]);
+  }
+
+  assert(updates.length > 0, "clubName or clubLogoDataUrl is required");
+
+  for (const [key, value] of updates) {
+    await dbRun(
+      db,
+      `UPDATE app_settings
+       SET value=?, updated_at=datetime('now')
+       WHERE key=?`,
+      value,
+      key
+    );
+  }
 
   return await getAppSettings(db);
 }
@@ -301,6 +347,42 @@ async function listAdminPlayers(db) {
   }));
 }
 
+async function adminOverview(db) {
+  const summary = await dbFirst(
+    db,
+    `SELECT
+      COUNT(*) AS totalPlayers,
+      SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS activePlayers,
+      SUM(CASE WHEN is_active=0 THEN 1 ELSE 0 END) AS inactivePlayers,
+      ROUND(AVG(CASE WHEN is_active=1 THEN current_elo END)) AS avgActiveElo
+    FROM players`
+  );
+
+  const inOpen = await dbFirst(
+    db,
+    `SELECT COUNT(DISTINCT tp.player_id) AS inOpenPlayers
+     FROM tournament_participants tp
+     JOIN tournaments t ON t.id = tp.tournament_id
+     WHERE t.status='OPEN'`
+  );
+
+  const adjusted = await dbFirst(
+    db,
+    `SELECT MAX(created_at) AS lastAdjustmentAt
+     FROM rating_events
+     WHERE event_type='ADJUSTMENT'`
+  );
+
+  return {
+    totalPlayers: Number(summary?.totalPlayers || 0),
+    activePlayers: Number(summary?.activePlayers || 0),
+    inactivePlayers: Number(summary?.inactivePlayers || 0),
+    avgActiveElo: Number(summary?.avgActiveElo || 0),
+    inOpenPlayers: Number(inOpen?.inOpenPlayers || 0),
+    lastAdjustmentAt: adjusted?.lastAdjustmentAt || null,
+  };
+}
+
 async function getAdminPlayer(db, playerId) {
   const row = await dbFirst(
     db,
@@ -365,6 +447,18 @@ async function adminUpdatePlayer(db, playerId, body) {
     }
   }
 
+  if (body.isActive != null) {
+    const nextIsActive = Boolean(body.isActive);
+    if (nextIsActive !== current.isActive) {
+      if (!nextIsActive) {
+        assert(!current.openTournament, "Cannot deactivate player while in OPEN tournament");
+      }
+      statements.push(
+        db.prepare(`UPDATE players SET is_active=?, updated_at=datetime('now') WHERE id=?`).bind(nextIsActive ? 1 : 0, playerId)
+      );
+    }
+  }
+
   assert(statements.length > 0, "No changes requested");
   await db.batch(statements);
   return await getAdminPlayer(db, playerId);
@@ -378,6 +472,58 @@ async function adminDeletePlayer(db, playerId) {
 
   await dbRun(db, `UPDATE players SET is_active=0, updated_at=datetime('now') WHERE id=?`, playerId);
   return await getAdminPlayer(db, playerId);
+}
+
+function parsePlayerIds(raw) {
+  assert(Array.isArray(raw), "playerIds must be an array");
+  const ids = [...new Set(raw.map((id) => parseId(id, "playerId")))];
+  assert(ids.length > 0, "At least 1 playerId is required");
+  assert(ids.length <= 200, "Too many playerIds (max 200)");
+  return ids;
+}
+
+async function adminBulkSetActive(db, body) {
+  const playerIds = parsePlayerIds(body?.playerIds);
+  assert(body?.isActive != null, "isActive is required");
+  const nextIsActive = Boolean(body.isActive);
+
+  const placeholders = playerIds.map(() => "?").join(", ");
+  const rows = await dbAll(
+    db,
+    `SELECT
+      p.id,
+      p.is_active AS isActive,
+      EXISTS(
+        SELECT 1
+        FROM tournament_participants tp
+        JOIN tournaments t ON t.id = tp.tournament_id
+        WHERE tp.player_id = p.id AND t.status = 'OPEN'
+      ) AS inOpenTournament
+    FROM players p
+    WHERE p.id IN (${placeholders})`,
+    ...playerIds
+  );
+
+  assert(rows.length === playerIds.length, "Some players do not exist");
+  if (!nextIsActive) {
+    const blocked = rows.filter((row) => Number(row.inOpenTournament) === 1).map((row) => Number(row.id));
+    assert(blocked.length === 0, `Cannot deactivate players in OPEN tournament: ${blocked.join(", ")}`);
+  }
+
+  const statements = playerIds.map((playerId) =>
+    db.prepare(`UPDATE players SET is_active=?, updated_at=datetime('now') WHERE id=?`).bind(nextIsActive ? 1 : 0, playerId)
+  );
+  await db.batch(statements);
+
+  const players = await listAdminPlayers(db);
+  const changedCount = players.filter((player) => playerIds.includes(player.id) && player.isActive === nextIsActive).length;
+  return {
+    changedCount,
+    targetStatus: nextIsActive ? "ACTIVE" : "INACTIVE",
+    playerIds,
+    players,
+    overview: await adminOverview(db),
+  };
 }
 
 async function updateTournamentRule(db, rawType, body) {
@@ -1843,9 +1989,20 @@ async function route(request, env) {
       return methodNotAllowed();
     }
 
+    if (segments.length === 2 && segments[1] === "overview") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return json({ ok: true, overview: await adminOverview(env.DB) });
+    }
+
     if (segments.length === 2 && segments[1] === "players") {
       if (request.method !== "GET") return methodNotAllowed();
       return json({ ok: true, players: await listAdminPlayers(env.DB) });
+    }
+
+    if (segments.length === 3 && segments[1] === "players" && segments[2] === "bulk") {
+      if (request.method !== "POST") return methodNotAllowed();
+      const body = await readJson(request);
+      return json({ ok: true, ...(await adminBulkSetActive(env.DB, body)) });
     }
 
     if (segments.length === 3 && segments[1] === "players") {
