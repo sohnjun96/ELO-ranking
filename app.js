@@ -19,6 +19,10 @@ const TAB_PATHS = {
   admin: "/admin",
 };
 
+const DEFAULT_APP_SETTINGS = {
+  clubName: "OO 테니스 동호회",
+};
+
 function normalizePathname(pathname) {
   const raw = String(pathname || "/").trim();
   if (!raw || raw === "/") return "/";
@@ -427,6 +431,7 @@ const app = createApp({
       playerStats: null,
       overview: null,
       tournamentRules: [],
+      appSettings: { ...DEFAULT_APP_SETTINGS },
       ruleDrafts: {
         REGULAR: { kFactor: 200, basePoints: 4 },
         ADHOC: { kFactor: 100, basePoints: 1 },
@@ -446,6 +451,7 @@ const app = createApp({
         playerQuery: "",
         adminQuery: "",
         adminStatus: "ALL",
+        recordMenuOpen: false,
         isMobile: false,
         desktopSidebarOpen: true,
         mobileSidebarOpen: false,
@@ -470,6 +476,7 @@ const app = createApp({
         simBscore: 4,
         adminRename: "",
         adminElo: null,
+        clubName: DEFAULT_APP_SETTINGS.clubName,
         tournamentEditName: "",
         tournamentEditDate: "",
         tournamentEditType: "REGULAR",
@@ -500,6 +507,10 @@ const app = createApp({
 
     isSidebarOpen() {
       return true;
+    },
+
+    isRecordsGroupActive() {
+      return this.activeTab === "records" || this.activeTab === "player";
     },
 
     activeRules() {
@@ -711,6 +722,18 @@ const app = createApp({
 
     closeSidebar() {},
 
+    toggleRecordsMenu() {
+      this.ui.recordMenuOpen = !this.ui.recordMenuOpen;
+    },
+
+    openRecordsMenu() {
+      this.ui.recordMenuOpen = true;
+    },
+
+    closeRecordsMenu() {
+      this.ui.recordMenuOpen = false;
+    },
+
     pathForTab(tabId) {
       return TAB_PATHS[tabId] || TAB_PATHS.dashboard;
     },
@@ -757,6 +780,7 @@ const app = createApp({
     },
 
     setActiveTab(tabId) {
+      this.closeRecordsMenu();
       this.navigateToTab(tabId);
     },
 
@@ -1282,6 +1306,11 @@ const app = createApp({
       this.recentMatches = Array.isArray(data.recentMatches) ? data.recentMatches.map(normalizeMatch) : [];
       this.openTournament = normalizeTournamentDetail(data.openTournament);
       this.applyRuleList(data.tournamentRules);
+      this.appSettings = {
+        ...DEFAULT_APP_SETTINGS,
+        ...(data?.appSettings || {}),
+      };
+      this.forms.clubName = this.appSettings.clubName;
 
       this.syncParticipantSelection();
       this.syncMatchSelectDefaults();
@@ -1696,6 +1725,29 @@ const app = createApp({
       }
     },
 
+    async saveClubName() {
+      const clubName = String(this.forms.clubName || "").trim();
+      if (!clubName) {
+        this.showToast("클럽명을 입력해 주세요.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("클럽명 설정을 저장하는 중...", async () => {
+          const data = await requestApi("/api/admin/settings", "PATCH", { clubName });
+          this.appSettings = {
+            ...DEFAULT_APP_SETTINGS,
+            ...(data?.settings || {}),
+          };
+          this.forms.clubName = this.appSettings.clubName;
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("클럽명 설정을 저장했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "클럽명 저장 실패", true);
+      }
+    },
+
     async renameAdminPlayer() {
       if (!this.selectedAdminPlayer) {
         this.showToast("관리할 선수를 선택하세요.", true);
@@ -1818,6 +1870,9 @@ const app = createApp({
     },
 
     activeTab(newValue) {
+      if (newValue !== "records" && newValue !== "player") {
+        this.closeRecordsMenu();
+      }
       if (newValue === "player") {
         this.schedulePlayerChartsRender();
       }
@@ -1866,24 +1921,69 @@ const app = createApp({
             <button type="button" class="side-close-btn" @click="closeSidebar">{{ ui.isMobile ? "닫기" : "접기" }}</button>
           </div>
 
-          <div class="brand-panel">
-            <p class="brand-overline">ELO RANKING SYSTEM</p>
-            <h1>ELO Ops Studio</h1>
-            <p>Cloudflare Pages + D1 기반 운영 콘솔</p>
-          </div>
+          <a
+            class="brand-panel brand-link"
+            :href="pathForTab('dashboard')"
+            @click.prevent="setActiveTab('dashboard')"
+            aria-label="대시보드로 이동"
+          >
+            <img class="brand-logo" src="/logo.svg" alt="동호회 로고" />
+            <div class="brand-copy">
+              <p class="brand-overline">ELO RANKING SYSTEM</p>
+              <h1>{{ appSettings.clubName }}</h1>
+              <p>Cloudflare Pages + D1 기반 운영 콘솔</p>
+            </div>
+          </a>
 
-          <nav class="tab-nav" aria-label="주요 메뉴">
+          <nav class="tab-nav top-nav" aria-label="주요 메뉴">
             <button
-              v-for="item in tabs"
-                :key="item.id"
+              type="button"
+              class="tab-btn top-nav-btn"
+              :class="{ active: activeTab === 'tournament' }"
+              @click="setActiveTab('tournament')"
+            >
+              <span class="tab-label">대회</span>
+            </button>
+
+            <div class="menu-dropdown" :class="{ open: ui.recordMenuOpen }">
+              <button
                 type="button"
-                class="tab-btn"
-                :class="{ active: activeTab === item.id }"
-                @click="setActiveTab(item.id)"
+                class="tab-btn top-nav-btn dropdown-toggle"
+                :class="{ active: isRecordsGroupActive }"
+                @click="toggleRecordsMenu"
+                :aria-expanded="ui.recordMenuOpen ? 'true' : 'false'"
               >
-                <span class="tab-label">{{ item.label }}</span>
-                <small>{{ item.desc }}</small>
+                <span class="tab-label">기록</span>
+                <span class="dropdown-caret" aria-hidden="true">▾</span>
               </button>
+              <div class="submenu" v-if="ui.recordMenuOpen">
+                <button
+                  type="button"
+                  class="submenu-item"
+                  :class="{ active: activeTab === 'records' }"
+                  @click="setActiveTab('records')"
+                >
+                  대회 기록
+                </button>
+                <button
+                  type="button"
+                  class="submenu-item"
+                  :class="{ active: activeTab === 'player' }"
+                  @click="setActiveTab('player')"
+                >
+                  선수별 기록
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="tab-btn top-nav-btn"
+              :class="{ active: activeTab === 'stats' }"
+              @click="setActiveTab('stats')"
+            >
+              <span class="tab-label">통계</span>
+            </button>
             </nav>
 
           <div class="side-foot">
@@ -1893,19 +1993,6 @@ const app = createApp({
         </aside>
 
         <div class="workspace">
-          <header class="workspace-head">
-            <div class="head-copy">
-              <h2>경기 운영 대시보드</h2>
-              <p>선수 등록부터 대회 종료 반영까지 한 흐름으로 관리합니다.</p>
-            </div>
-            <div class="head-actions">
-              <button type="button" class="menu-toggle-btn" @click="toggleSidebar" :aria-expanded="isSidebarOpen ? 'true' : 'false'">
-                <span class="menu-toggle-icon" aria-hidden="true"></span>
-                <span>{{ isSidebarOpen ? "메뉴 패널 접기" : "메뉴 패널 보기" }}</span>
-              </button>
-            </div>
-          </header>
-
           <main class="panel-stack">
             <section v-show="activeTab === 'dashboard'" class="panel-group">
               <article class="surface accent">
@@ -1989,7 +2076,7 @@ const app = createApp({
             </section>
 
             <section v-show="activeTab === 'tournament'" class="panel-group">
-              <div v-if="!openTournament" class="panel-grid two">
+              <div v-if="!openTournament" class="panel-grid">
                 <article class="surface">
                   <h3>새 대회 시작</h3>
                   <form class="stack-form" @submit.prevent="submitTournament">
@@ -2051,10 +2138,6 @@ const app = createApp({
                   </form>
                 </article>
 
-                <article class="surface">
-                  <h3>진행 중 대회</h3>
-                  <p class="empty-copy">현재 진행 중인 대회가 없습니다.</p>
-                </article>
               </div>
 
               <template v-else>
@@ -2465,6 +2548,15 @@ const app = createApp({
             </section>
 
             <section v-show="activeTab === 'admin'" class="panel-group">
+              <article class="surface">
+                <h3>클럽 브랜딩</h3>
+                <p class="muted">상단 로고 옆 클럽명을 설정합니다.</p>
+                <form class="inline-form" @submit.prevent="saveClubName">
+                  <input v-model.trim="forms.clubName" placeholder="클럽명 입력" required />
+                  <button type="submit" class="btn primary">저장</button>
+                </form>
+              </article>
+
               <div class="panel-grid two">
                 <article class="surface">
                   <header class="surface-head">
@@ -2811,8 +2903,8 @@ const app = createApp({
           <p class="muted">총 {{ playerMatchCards.length }}경기</p>
           <div class="card-list modal-card-list">
             <match-card
-              v-for="match in playerMatchCards"
-              :key="'player-modal-match-' + match.matchId"
+              v-for="(match, idx) in playerMatchCards"
+              :key="'player-modal-match-' + match.matchId + '-' + idx"
               :match="match"
               :type-label="tournamentTypeLabel(match.tournamentType)"
             />

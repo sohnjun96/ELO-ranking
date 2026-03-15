@@ -108,6 +108,47 @@ async function listTournamentRules(db) {
   }));
 }
 
+async function ensureAppSettings(db) {
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`
+  );
+
+  await dbRun(
+    db,
+    `INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+    VALUES ('club_name', 'OO 테니스 동호회', datetime('now'))`
+  );
+}
+
+async function getAppSettings(db) {
+  await ensureAppSettings(db);
+  const row = await dbFirst(db, `SELECT value FROM app_settings WHERE key='club_name'`);
+  return {
+    clubName: String(row?.value || "OO 테니스 동호회"),
+  };
+}
+
+async function updateAppSettings(db, body) {
+  await ensureAppSettings(db);
+  const clubName = String(body?.clubName || "").trim();
+  assert(clubName.length > 0, "clubName is required");
+
+  await dbRun(
+    db,
+    `UPDATE app_settings
+     SET value=?, updated_at=datetime('now')
+     WHERE key='club_name'`,
+    clubName
+  );
+
+  return await getAppSettings(db);
+}
+
 async function getTournamentRuleForType(db, rawType) {
   const tournamentType = normalizeTournamentType(rawType);
   assert(tournamentType, "tournamentType must be REGULAR, ADHOC or FRIENDLY");
@@ -1760,9 +1801,10 @@ async function route(request, env) {
     const players = await listPlayers(env.DB);
     const recentMatches = await listRecentMatches(env.DB, 8);
     const tournamentRules = await listTournamentRules(env.DB);
+    const appSettings = await getAppSettings(env.DB);
     const open = await getOpenTournamentRow(env.DB);
     const openTournament = open ? await tournamentDetail(env.DB, Number(open.id)) : null;
-    return json({ ok: true, players, recentMatches, openTournament, tournamentRules });
+    return json({ ok: true, players, recentMatches, openTournament, tournamentRules, appSettings });
   }
 
   if (segments[0] === "recent-matches") {
@@ -1790,6 +1832,17 @@ async function route(request, env) {
   }
 
   if (segments[0] === "admin") {
+    if (segments.length === 2 && segments[1] === "settings") {
+      if (request.method === "GET") {
+        return json({ ok: true, settings: await getAppSettings(env.DB) });
+      }
+      if (request.method === "PATCH") {
+        const body = await readJson(request);
+        return json({ ok: true, settings: await updateAppSettings(env.DB, body) });
+      }
+      return methodNotAllowed();
+    }
+
     if (segments.length === 2 && segments[1] === "players") {
       if (request.method !== "GET") return methodNotAllowed();
       return json({ ok: true, players: await listAdminPlayers(env.DB) });

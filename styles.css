@@ -180,6 +180,34 @@ button {
   gap: 6px;
 }
 
+.brand-link {
+  text-decoration: none;
+  color: inherit;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-link:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-lg);
+}
+
+.brand-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 6px;
+  box-shadow: var(--shadow-sm);
+}
+
+.brand-copy {
+  display: grid;
+  gap: 4px;
+}
+
 .brand-overline {
   font-size: 11px;
   font-weight: 700;
@@ -203,6 +231,10 @@ button {
   gap: 8px;
 }
 
+.top-nav {
+  align-items: stretch;
+}
+
 .tab-btn {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -217,6 +249,70 @@ button {
   text-decoration: none;
   flex: 1 1 180px;
   min-width: 170px;
+}
+
+.top-nav-btn {
+  min-width: 124px;
+  flex: 0 0 auto;
+  text-align: center;
+  justify-items: center;
+}
+
+.menu-dropdown {
+  position: relative;
+}
+
+.dropdown-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.dropdown-caret {
+  font-size: 12px;
+  opacity: 0.8;
+  transition: transform 0.15s ease;
+}
+
+.submenu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  min-width: 170px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.menu-dropdown.open .dropdown-caret {
+  transform: translateY(1px) rotate(180deg);
+}
+
+.submenu-item {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.submenu-item:hover {
+  border-color: var(--line);
+  background: var(--surface-soft);
+}
+
+.submenu-item.active {
+  border-color: #8fb4ff;
+  background: var(--primary-soft);
+  color: #1e4fb4;
 }
 
 .tab-btn:hover {
@@ -1420,9 +1516,28 @@ select:focus {
 }
 
 .modal-card-list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
   max-height: min(64vh, 620px);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 2px;
+}
+
+.modal-card-list .match-card {
+  flex: 0 0 auto;
+  width: 100%;
+  display: block;
+}
+
+.modal-card-list .match-body {
+  display: block;
+}
+
+.modal-card-list .team-row + .team-row {
+  margin-top: 10px;
 }
 
 .modal-actions {
@@ -1604,6 +1719,21 @@ select:focus {
     min-width: 130px;
   }
 
+  .menu-dropdown {
+    flex: 1 1 150px;
+  }
+
+  .menu-dropdown .top-nav-btn {
+    width: 100%;
+  }
+
+  .submenu {
+    position: static;
+    margin-top: 6px;
+    min-width: 0;
+    width: 100%;
+  }
+
   .match-card-head {
     padding: 10px 12px;
   }
@@ -1731,6 +1861,27 @@ select:focus {
     background: #0f1a29;
     color: var(--ink);
     border-color: var(--line-strong);
+  }
+
+  .brand-logo {
+    background: #122036;
+    border-color: #2f4565;
+  }
+
+  .submenu {
+    background: #0f1a29;
+    border-color: var(--line-strong);
+  }
+
+  .submenu-item:hover {
+    border-color: #355073;
+    background: #16263a;
+  }
+
+  .submenu-item.active {
+    border-color: #466fb8;
+    background: #1a2f4e;
+    color: #c5dcff;
   }
 
   .menu-toggle-btn {

@@ -40,6 +40,15 @@ VALUES ('ADHOC', '상시 대회', 100, 1);
 INSERT OR IGNORE INTO tournament_rules (tournament_type, display_name, k_factor, base_points)
 VALUES ('FRIENDLY', '친선전', 0, 0);
 
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+VALUES ('club_name', 'OO 테니스 동호회', datetime('now'));
+
 CREATE TABLE IF NOT EXISTS tournament_participants (
   tournament_id INTEGER NOT NULL,
   player_id INTEGER NOT NULL,
