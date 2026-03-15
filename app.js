@@ -174,16 +174,22 @@ function normalizeTournamentDetail(detail) {
         ? {
             roundId: toInt(detail.drawPlan.latestRound.roundId),
             roundNo: toInt(detail.drawPlan.latestRound.roundNo),
+            drawFormat: detail.drawPlan.latestRound.drawFormat || "DOUBLES",
             courtCount: toInt(detail.drawPlan.latestRound.courtCount),
             createdAt: detail.drawPlan.latestRound.createdAt || "",
             assignments: Array.isArray(detail.drawPlan.latestRound.assignments)
               ? detail.drawPlan.latestRound.assignments.map((court) => ({
                   courtNo: toInt(court.courtNo),
-                  playerAId: toInt(court.playerAId),
-                  playerAName: court.playerAName || "",
-                  playerBId: toInt(court.playerBId),
-                  playerBName: court.playerBName || "",
+                  matchFormat: court.matchFormat || "SINGLES",
+                  teamAPlayer1Id: toInt(court.teamAPlayer1Id),
+                  teamAPlayer2Id: court.teamAPlayer2Id == null ? null : toInt(court.teamAPlayer2Id),
+                  teamBPlayer1Id: toInt(court.teamBPlayer1Id),
+                  teamBPlayer2Id: court.teamBPlayer2Id == null ? null : toInt(court.teamBPlayer2Id),
+                  teamAName: court.teamAName || "",
+                  teamBName: court.teamBName || "",
                   previousPairCount: toInt(court.previousPairCount),
+                  previousTeamAPairCount: toInt(court.previousTeamAPairCount),
+                  previousTeamBPairCount: toInt(court.previousTeamBPairCount),
                 }))
               : [],
             waiting: Array.isArray(detail.drawPlan.latestRound.waiting)
@@ -281,6 +287,10 @@ const MatchCard = {
       if (n < 0) return "down";
       return "flat";
     },
+    resultTag(side) {
+      if (this.winnerSide === "DRAW") return "무";
+      return this.winnerSide === side ? "승" : "패";
+    },
     formatDeltaTag(value) {
       const n = Number(value || 0);
       if (n === 0) return "0";
@@ -329,7 +339,7 @@ const MatchCard = {
       <div class="match-body">
         <div class="team-row" :class="{ winner: winnerSide === 'A', loser: winnerSide === 'B' }">
           <div class="team-main">
-            <span class="team-side">A</span>
+            <span class="team-side">{{ resultTag('A') }}</span>
             <div class="team-stack">
               <div class="team-name">
                 <template v-if="showPlayerLinks">
@@ -348,7 +358,7 @@ const MatchCard = {
 
         <div class="team-row" :class="{ winner: winnerSide === 'B', loser: winnerSide === 'A' }">
           <div class="team-main">
-            <span class="team-side">B</span>
+            <span class="team-side">{{ resultTag('B') }}</span>
             <div class="team-stack">
               <div class="team-name">
                 <template v-if="showPlayerLinks">
@@ -505,6 +515,10 @@ const app = createApp({
       return rows.filter((player) => normalizeSearch(player.name).includes(query));
     },
 
+    dashboardRankingPlayers() {
+      return this.filteredRankingPlayers.slice(0, 7);
+    },
+
     filteredRecentMatches() {
       return this.recentMatches.filter((match) => {
         if (this.ui.recentFormat === "ALL") return true;
@@ -567,7 +581,11 @@ const app = createApp({
     },
 
     maxDrawableCourts() {
-      return Math.max(1, Math.floor(this.openTournamentParticipants.length / 2));
+      const count = this.openTournamentParticipants.length;
+      if (count >= 4) {
+        return Math.max(1, Math.floor(count / 4));
+      }
+      return Math.max(1, Math.floor(count / 2));
     },
 
     recordTournamentOptions() {
@@ -901,6 +919,31 @@ const app = createApp({
     openMatchEntryModal() {
       if (!this.openTournament) return;
       this.syncMatchSelectDefaults();
+      this.modals.matchEntry = true;
+    },
+
+    openMatchEntryFromDraw(court) {
+      if (!this.openTournament) return;
+      const matchFormat = String(court?.matchFormat || "SINGLES").toUpperCase() === "DOUBLES" ? "DOUBLES" : "SINGLES";
+      const teamAPlayer1Id = toInt(court?.teamAPlayer1Id, 0);
+      const teamAPlayer2Id = court?.teamAPlayer2Id == null ? null : toInt(court?.teamAPlayer2Id, 0);
+      const teamBPlayer1Id = toInt(court?.teamBPlayer1Id, 0);
+      const teamBPlayer2Id = court?.teamBPlayer2Id == null ? null : toInt(court?.teamBPlayer2Id, 0);
+
+      if (teamAPlayer1Id <= 0 || teamBPlayer1Id <= 0) {
+        this.showToast("대진표 선수 정보가 올바르지 않습니다.", true);
+        return;
+      }
+      if (matchFormat === "DOUBLES" && (teamAPlayer2Id == null || teamAPlayer2Id <= 0 || teamBPlayer2Id == null || teamBPlayer2Id <= 0)) {
+        this.showToast("복식 대진표 선수 정보가 올바르지 않습니다.", true);
+        return;
+      }
+
+      this.forms.matchFormat = matchFormat;
+      this.forms.matchA1 = String(teamAPlayer1Id);
+      this.forms.matchA2 = matchFormat === "DOUBLES" ? String(teamAPlayer2Id) : "";
+      this.forms.matchB1 = String(teamBPlayer1Id);
+      this.forms.matchB2 = matchFormat === "DOUBLES" ? String(teamBPlayer2Id) : "";
       this.modals.matchEntry = true;
     },
 
@@ -1838,69 +1881,67 @@ const app = createApp({
                 </form>
               </article>
 
-              <div class="panel-grid two">
-                <article class="surface">
-                  <header class="surface-head">
-                    <h3>현재 랭킹</h3>
-                    <input v-model.trim="ui.rankingQuery" placeholder="선수 이름 검색" />
-                  </header>
-                  <div class="table-shell">
-                    <table class="data-table">
-                      <thead>
-                        <tr>
-                          <th>순위</th>
-                          <th>선수</th>
-                          <th>ELO / 점수</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="player in filteredRankingPlayers" :key="'rank-' + player.id">
-                          <td>#{{ player.rank }}</td>
-                          <td>
-                            <button type="button" class="inline-link table-link" @click="jumpToPlayerById(player.id)">
-                              {{ player.name }}
-                            </button>
-                          </td>
-                          <td>
-                            <div class="elo-cell">
-                              <strong>{{ formatNum(player.currentElo) }}</strong>
-                              <small>ELO</small>
-                            </div>
-                          </td>
-                        </tr>
-                        <tr v-if="!filteredRankingPlayers.length">
-                          <td colspan="3" class="empty-row">표시할 선수가 없습니다.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </article>
+              <article class="surface">
+                <header class="surface-head">
+                  <h3>현재 랭킹</h3>
+                  <input v-model.trim="ui.rankingQuery" placeholder="선수 이름 검색" />
+                </header>
+                <div class="table-shell">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>순위</th>
+                        <th>선수</th>
+                        <th>ELO / 점수</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="player in dashboardRankingPlayers" :key="'rank-' + player.id">
+                        <td>#{{ player.rank }}</td>
+                        <td>
+                          <button type="button" class="inline-link table-link" @click="jumpToPlayerById(player.id)">
+                            {{ player.name }}
+                          </button>
+                        </td>
+                        <td>
+                          <div class="elo-cell">
+                            <strong>{{ formatNum(player.currentElo) }}</strong>
+                            <small>ELO</small>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr v-if="!dashboardRankingPlayers.length">
+                        <td colspan="3" class="empty-row">표시할 선수가 없습니다.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
 
-                <article class="surface">
-                  <header class="surface-head">
-                    <h3>최근 경기</h3>
-                    <select v-model="ui.recentFormat">
-                      <option value="ALL">전체</option>
-                      <option value="SINGLES">단식</option>
-                      <option value="DOUBLES">복식</option>
-                    </select>
-                  </header>
+              <article class="surface">
+                <header class="surface-head">
+                  <h3>최근 경기</h3>
+                  <select v-model="ui.recentFormat">
+                    <option value="ALL">전체</option>
+                    <option value="SINGLES">단식</option>
+                    <option value="DOUBLES">복식</option>
+                  </select>
+                </header>
 
-                  <div class="card-list">
-                    <match-card
-                      v-for="match in dashboardRecentMatches"
-                      :key="'recent-' + match.matchId"
-                      :match="match"
-                      :type-label="tournamentTypeLabel(match.tournamentType)"
-                      :linkable-tournament="true"
-                      :show-player-links="true"
-                      @open-tournament="jumpToTournamentById"
-                      @open-player="jumpToPlayerByName"
-                    />
-                    <p v-if="!dashboardRecentMatches.length" class="empty-copy">최근 경기 데이터가 없습니다.</p>
-                  </div>
-                </article>
-              </div>
+                <div class="card-list">
+                  <match-card
+                    v-for="match in dashboardRecentMatches"
+                    :key="'recent-' + match.matchId"
+                    :match="match"
+                    :type-label="tournamentTypeLabel(match.tournamentType)"
+                    :linkable-tournament="true"
+                    :show-player-links="true"
+                    @open-tournament="jumpToTournamentById"
+                    @open-player="jumpToPlayerByName"
+                  />
+                  <p v-if="!dashboardRecentMatches.length" class="empty-copy">최근 경기 데이터가 없습니다.</p>
+                </div>
+              </article>
 
               <section class="kpi-grid dashboard-kpi-grid" aria-label="Dashboard metrics">
                 <article v-for="metric in quickMetrics" :key="'dashboard-metric-' + metric.label" class="kpi-card">
@@ -1991,20 +2032,32 @@ const app = createApp({
                   <header class="surface-head">
                     <h3>랜덤 대진표</h3>
                     <p v-if="openTournamentDrawLatest" class="muted">
-                      {{ openTournamentDrawLatest.roundNo }}회차 · 코트 {{ openTournamentDrawLatest.courtCount }}개 · {{ openTournamentDrawLatest.createdAt }}
+                      {{ openTournamentDrawLatest.roundNo }}회차 · {{ matchFormatLabel(openTournamentDrawLatest.drawFormat) }} · 코트 {{ openTournamentDrawLatest.courtCount }}개 · {{ openTournamentDrawLatest.createdAt }}
                     </p>
                   </header>
 
                   <div v-if="openTournamentDrawLatest" class="draw-court-grid">
-                    <article v-for="court in openTournamentDrawAssignments" :key="'draw-court-' + court.courtNo" class="draw-court-card">
+                    <article
+                      v-for="court in openTournamentDrawAssignments"
+                      :key="'draw-court-' + court.courtNo"
+                      class="draw-court-card"
+                      role="button"
+                      tabindex="0"
+                      @click="openMatchEntryFromDraw(court)"
+                      @keydown.enter.prevent="openMatchEntryFromDraw(court)"
+                      @keydown.space.prevent="openMatchEntryFromDraw(court)"
+                    >
                       <div class="draw-court-head">
                         <strong>코트 {{ court.courtNo }}</strong>
-                        <small>과거 동일 매치 {{ court.previousPairCount }}회</small>
+                        <small v-if="court.matchFormat === 'DOUBLES'">
+                          클릭하여 결과 입력 · 팀A 중복 {{ court.previousTeamAPairCount }}회 · 팀B 중복 {{ court.previousTeamBPairCount }}회
+                        </small>
+                        <small v-else>클릭하여 결과 입력 · 과거 동일 매치 {{ court.previousPairCount }}회</small>
                       </div>
                       <div class="draw-vs-line">
-                        <span>{{ court.playerAName }}</span>
+                        <span>{{ court.teamAName }}</span>
                         <em>VS</em>
-                        <span>{{ court.playerBName }}</span>
+                        <span>{{ court.teamBName }}</span>
                       </div>
                     </article>
                   </div>

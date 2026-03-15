@@ -971,6 +971,20 @@ select:focus {
   padding: 10px 11px;
   display: grid;
   gap: 9px;
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.draw-court-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+  border-color: #7ea5e6;
+}
+
+.draw-court-card:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(47, 132, 255, 0.28);
+  border-color: #2f84ff;
 }
 
 .draw-court-head {
@@ -1198,14 +1212,14 @@ select:focus {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-width: 54px;
-  height: 32px;
+  min-width: 40px;
+  height: 24px;
   border-radius: 10px;
-  padding: 0 10px 0 9px;
+  padding: 0 8px;
   border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(255, 255, 255, 0.16);
   color: #eef4ff;
-  font-size: 14px;
+  font-size: 9px;
   font-weight: 700;
 }
 
@@ -1217,7 +1231,7 @@ select:focus {
 }
 
 .match-format {
-  font-size: 23px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: #f6f9ff;
@@ -1231,7 +1245,7 @@ select:focus {
 }
 
 .match-date {
-  font-size: 13px;
+  font-size: 9px;
   font-weight: 600;
   color: rgba(246, 249, 255, 0.96);
 }
@@ -1240,7 +1254,7 @@ select:focus {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: 9px;
   color: rgba(246, 249, 255, 0.95);
   min-height: 22px;
   flex-wrap: wrap;
@@ -1255,7 +1269,7 @@ select:focus {
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.14);
-  font-size: 12px;
+  font-size: 8px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -1273,7 +1287,7 @@ select:focus {
 
 .team-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 70px;
+  grid-template-columns: minmax(0, 1fr) 48px;
   align-items: stretch;
   border-radius: 14px;
   border: 1px solid var(--line);
@@ -1300,13 +1314,13 @@ select:focus {
 }
 
 .team-side {
-  width: 44px;
-  height: 44px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: 16px;
   font-weight: 700;
   background: #ccd6e6;
   color: #f6f9ff;
@@ -1331,7 +1345,7 @@ select:focus {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 22px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: #1f3248;
@@ -1356,7 +1370,7 @@ select:focus {
 }
 
 .team-delta {
-  font-size: 17px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -1379,7 +1393,7 @@ select:focus {
   justify-content: center;
   border-left: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.56);
-  font-size: 36px;
+  font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.03em;
   color: #7f8e9f;
@@ -1654,15 +1668,15 @@ select:focus {
   }
 
   .match-format {
-    font-size: 20px;
-  }
-
-  .match-meta-line {
     font-size: 13px;
   }
 
+  .match-meta-line {
+    font-size: 9px;
+  }
+
   .team-row {
-    grid-template-columns: minmax(0, 1fr) 58px;
+    grid-template-columns: minmax(0, 1fr) 40px;
   }
 
   .team-main {
@@ -1671,21 +1685,21 @@ select:focus {
   }
 
   .team-side {
-    width: 38px;
-    height: 38px;
-    font-size: 20px;
+    width: 26px;
+    height: 26px;
+    font-size: 13px;
   }
 
   .team-name {
-    font-size: 17px;
+    font-size: 11px;
   }
 
   .team-delta {
-    font-size: 14px;
+    font-size: 9px;
   }
 
   .team-score {
-    font-size: 28px;
+    font-size: 18px;
   }
 
   .kpi-grid {
@@ -1957,6 +1971,15 @@ select:focus {
   .draw-court-card {
     background: linear-gradient(160deg, #152336, #121f31);
     border-color: #2c3f5b;
+  }
+
+  .draw-court-card:hover {
+    border-color: #4b6f9d;
+  }
+
+  .draw-court-card:focus-visible {
+    box-shadow: 0 0 0 3px rgba(79, 136, 255, 0.34);
+    border-color: #4f88ff;
   }
 
   .draw-vs-line span {

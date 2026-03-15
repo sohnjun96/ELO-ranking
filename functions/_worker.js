@@ -433,6 +433,7 @@ async function ensureTournamentDrawTables(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       tournament_id INTEGER NOT NULL,
       round_no INTEGER NOT NULL CHECK (round_no >= 1),
+      draw_format TEXT NOT NULL DEFAULT 'DOUBLES' CHECK (draw_format IN ('SINGLES', 'DOUBLES')),
       court_count INTEGER NOT NULL CHECK (court_count >= 1),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
@@ -448,13 +449,22 @@ async function ensureTournamentDrawTables(db) {
       round_id INTEGER NOT NULL,
       court_no INTEGER NOT NULL CHECK (court_no >= 1),
       player_a_id INTEGER NOT NULL,
+      player_a2_id INTEGER,
       player_b_id INTEGER NOT NULL,
+      player_b2_id INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
       FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,
       FOREIGN KEY (player_a_id) REFERENCES players(id),
+      FOREIGN KEY (player_a2_id) REFERENCES players(id),
       FOREIGN KEY (player_b_id) REFERENCES players(id),
+      FOREIGN KEY (player_b2_id) REFERENCES players(id),
       CHECK (player_a_id <> player_b_id),
+      CHECK (
+        (player_a2_id IS NULL AND player_b2_id IS NULL)
+        OR
+        (player_a2_id IS NOT NULL AND player_b2_id IS NOT NULL)
+      ),
       UNIQUE (round_id, court_no)
     )`
   );
@@ -502,6 +512,20 @@ async function ensureTournamentDrawTables(db) {
       CHECK (player_low_id < player_high_id)
     )`
   );
+
+  const tryAddColumn = async (tableName, columnDefinition) => {
+    try {
+      await dbRun(db, `ALTER TABLE ${tableName} ADD COLUMN ${columnDefinition}`);
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error || "");
+      const isDuplicate = message.includes("duplicate column name") || message.includes("already exists");
+      if (!isDuplicate) throw error;
+    }
+  };
+
+  await tryAddColumn("tournament_draw_rounds", "draw_format TEXT NOT NULL DEFAULT 'DOUBLES'");
+  await tryAddColumn("tournament_draw_assignments", "player_a2_id INTEGER");
+  await tryAddColumn("tournament_draw_assignments", "player_b2_id INTEGER");
 }
 
 function drawPairIds(playerAId, playerBId) {
@@ -658,11 +682,75 @@ function buildDrawPairs(selectedPlayerIds, pairMap, stateMap) {
   return bestPairs;
 }
 
+function buildDrawDoublesAssignments(selectedPlayerIds, pairMap, stateMap) {
+  if (selectedPlayerIds.length < 4 || selectedPlayerIds.length % 4 !== 0) return [];
+
+  const attempts = Math.max(40, selectedPlayerIds.length * 10);
+  let bestAssignments = [];
+  let bestRepeated = Number.POSITIVE_INFINITY;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const remaining = shuffleArray(selectedPlayerIds);
+    const teams = [];
+
+    while (remaining.length > 1) {
+      const player1Id = remaining.shift();
+      let pickIndex = 0;
+      let bestWeight = Number.POSITIVE_INFINITY;
+
+      for (let i = 0; i < remaining.length; i += 1) {
+        const player2Id = remaining[i];
+        const partnerCount = pairMap.get(drawPairKey(player1Id, player2Id)) || 0;
+        const state = stateMap.get(player2Id) || { carryOver: 0, assignedCount: 0 };
+        const weight = partnerCount * 10000 + state.assignedCount * 8 - state.carryOver * 16 + Math.random();
+        if (weight < bestWeight) {
+          bestWeight = weight;
+          pickIndex = i;
+        }
+      }
+
+      const [player2Id] = remaining.splice(pickIndex, 1);
+      teams.push([player1Id, player2Id]);
+    }
+
+    if (teams.length % 2 !== 0) continue;
+    const shuffledTeams = shuffleArray(teams);
+    const assignments = [];
+    for (let i = 0; i < shuffledTeams.length; i += 2) {
+      assignments.push({
+        teamA: shuffledTeams[i],
+        teamB: shuffledTeams[i + 1],
+      });
+    }
+
+    let repeatedCount = 0;
+    let score = 0;
+    for (const assignment of assignments) {
+      const [a1, a2] = assignment.teamA;
+      const [b1, b2] = assignment.teamB;
+      const teamAPairCount = pairMap.get(drawPairKey(a1, a2)) || 0;
+      const teamBPairCount = pairMap.get(drawPairKey(b1, b2)) || 0;
+      if (teamAPairCount > 0) repeatedCount += 1;
+      if (teamBPairCount > 0) repeatedCount += 1;
+      score += teamAPairCount + teamBPairCount;
+    }
+
+    if (repeatedCount < bestRepeated || (repeatedCount === bestRepeated && score < bestScore)) {
+      bestAssignments = assignments;
+      bestRepeated = repeatedCount;
+      bestScore = score;
+    }
+  }
+
+  return bestAssignments;
+}
+
 async function getTournamentDrawPlan(db, tournamentId) {
   await ensureTournamentDrawTables(db);
   const latestRound = await dbFirst(
     db,
-    `SELECT id, round_no AS roundNo, court_count AS courtCount, created_at AS createdAt
+    `SELECT id, round_no AS roundNo, draw_format AS drawFormat, court_count AS courtCount, created_at AS createdAt
     FROM tournament_draw_rounds
     WHERE tournament_id=?
     ORDER BY round_no DESC, id DESC
@@ -682,21 +770,29 @@ async function getTournamentDrawPlan(db, tournamentId) {
     `SELECT
       a.court_no AS courtNo,
       a.player_a_id AS playerAId,
-      pa.name AS playerAName,
+      pa1.name AS playerAName,
+      a.player_a2_id AS playerA2Id,
+      pa2.name AS playerA2Name,
       a.player_b_id AS playerBId,
-      pb.name AS playerBName,
-      COALESCE(ps.pair_count, 0) AS pairCount
+      pb1.name AS playerBName,
+      a.player_b2_id AS playerB2Id,
+      pb2.name AS playerB2Name
     FROM tournament_draw_assignments a
-    JOIN players pa ON pa.id = a.player_a_id
-    JOIN players pb ON pb.id = a.player_b_id
-    LEFT JOIN tournament_draw_pair_stats ps
-      ON ps.tournament_id = a.tournament_id
-      AND ps.player_low_id = CASE WHEN a.player_a_id < a.player_b_id THEN a.player_a_id ELSE a.player_b_id END
-      AND ps.player_high_id = CASE WHEN a.player_a_id < a.player_b_id THEN a.player_b_id ELSE a.player_a_id END
+    JOIN players pa1 ON pa1.id = a.player_a_id
+    LEFT JOIN players pa2 ON pa2.id = a.player_a2_id
+    JOIN players pb1 ON pb1.id = a.player_b_id
+    LEFT JOIN players pb2 ON pb2.id = a.player_b2_id
     WHERE a.round_id=?
     ORDER BY a.court_no ASC`,
     Number(latestRound.id)
   );
+
+  const pairMap = await getTournamentDrawPairMap(db, tournamentId);
+  const hasSecondPlayers = assignmentRows.some((row) => row.playerA2Id != null && row.playerB2Id != null);
+  const fallbackFormat = hasSecondPlayers ? "DOUBLES" : "SINGLES";
+  const rawRoundFormat = latestRound.drawFormat || fallbackFormat;
+  const normalizedRoundFormat = normalizeMatchFormat(rawRoundFormat);
+  const drawFormat = normalizedRoundFormat === "DOUBLES" && !hasSecondPlayers ? "SINGLES" : normalizedRoundFormat;
 
   const waitingRows = await dbAll(
     db,
@@ -728,16 +824,45 @@ async function getTournamentDrawPlan(db, tournamentId) {
     latestRound: {
       roundId: Number(latestRound.id),
       roundNo: Number(latestRound.roundNo),
+      drawFormat,
       courtCount: Number(latestRound.courtCount),
       createdAt: latestRound.createdAt,
-      assignments: assignmentRows.map((row) => ({
-        courtNo: Number(row.courtNo),
-        playerAId: Number(row.playerAId),
-        playerAName: row.playerAName,
-        playerBId: Number(row.playerBId),
-        playerBName: row.playerBName,
-        previousPairCount: Math.max(0, Number(row.pairCount || 0) - 1),
-      })),
+      assignments: assignmentRows.map((row) => {
+        const playerAId = Number(row.playerAId);
+        const playerA2Id = row.playerA2Id == null ? null : Number(row.playerA2Id);
+        const playerBId = Number(row.playerBId);
+        const playerB2Id = row.playerB2Id == null ? null : Number(row.playerB2Id);
+
+        if (drawFormat === "DOUBLES") {
+          const teamAPairCount = playerA2Id == null ? 0 : pairMap.get(drawPairKey(playerAId, playerA2Id)) || 0;
+          const teamBPairCount = playerB2Id == null ? 0 : pairMap.get(drawPairKey(playerBId, playerB2Id)) || 0;
+          return {
+            courtNo: Number(row.courtNo),
+            matchFormat: "DOUBLES",
+            teamAPlayer1Id: playerAId,
+            teamAPlayer2Id: playerA2Id,
+            teamBPlayer1Id: playerBId,
+            teamBPlayer2Id: playerB2Id,
+            teamAName: teamName(row.playerAName, row.playerA2Name, "DOUBLES"),
+            teamBName: teamName(row.playerBName, row.playerB2Name, "DOUBLES"),
+            previousTeamAPairCount: Math.max(0, Number(teamAPairCount || 0) - 1),
+            previousTeamBPairCount: Math.max(0, Number(teamBPairCount || 0) - 1),
+          };
+        }
+
+        const singlePairCount = pairMap.get(drawPairKey(playerAId, playerBId)) || 0;
+        return {
+          courtNo: Number(row.courtNo),
+          matchFormat: "SINGLES",
+          teamAPlayer1Id: playerAId,
+          teamAPlayer2Id: null,
+          teamBPlayer1Id: playerBId,
+          teamBPlayer2Id: null,
+          teamAName: teamName(row.playerAName, null, "SINGLES"),
+          teamBName: teamName(row.playerBName, null, "SINGLES"),
+          previousPairCount: Math.max(0, Number(singlePairCount || 0) - 1),
+        };
+      }),
       waiting: waitingRows.map((row) => ({
         playerId: Number(row.playerId),
         name: row.name,
@@ -1165,6 +1290,12 @@ async function generateTournamentDraw(db, tournamentId, body) {
   const participantIds = participants.map((row) => Number(row.playerId));
   assert(participantIds.length >= 2, "At least 2 participants are required");
 
+  let drawFormat = body?.matchFormat ? normalizeMatchFormat(body.matchFormat) : "DOUBLES";
+  if (drawFormat === "DOUBLES" && participantIds.length < 4) {
+    drawFormat = "SINGLES";
+  }
+  const playersPerCourt = drawFormat === "DOUBLES" ? 4 : 2;
+
   await syncTournamentDrawState(db, tournamentId, participantIds);
   const stateMap = await getTournamentDrawStateMap(db, tournamentId, participantIds);
   const pairMap = await getTournamentDrawPairMap(db, tournamentId);
@@ -1189,14 +1320,20 @@ async function generateTournamentDraw(db, tournamentId, body) {
         a.randomTie - b.randomTie
     );
 
-  const usableCourts = Math.min(courtCount, Math.floor(ranked.length / 2));
+  const usableCourts = Math.min(courtCount, Math.floor(ranked.length / playersPerCourt));
   assert(usableCourts >= 1, "Not enough participants for this court count");
 
-  const slots = usableCourts * 2;
+  const slots = usableCourts * playersPerCourt;
   const selectedPlayerIds = ranked.slice(0, slots).map((row) => row.playerId);
   const waitingPlayerIds = ranked.slice(slots).map((row) => row.playerId);
-  const pairs = buildDrawPairs(selectedPlayerIds, pairMap, stateMap);
-  assert(pairs.length === usableCourts, "Failed to generate pairings");
+  const assignments =
+    drawFormat === "DOUBLES"
+      ? buildDrawDoublesAssignments(selectedPlayerIds, pairMap, stateMap)
+      : buildDrawPairs(selectedPlayerIds, pairMap, stateMap).map((pair) => ({
+          teamA: [pair[0], null],
+          teamB: [pair[1], null],
+        }));
+  assert(assignments.length === usableCourts, "Failed to generate pairings");
 
   const roundRow = await dbFirst(
     db,
@@ -1209,51 +1346,81 @@ async function generateTournamentDraw(db, tournamentId, body) {
 
   const insertedRound = await dbRun(
     db,
-    `INSERT INTO tournament_draw_rounds (tournament_id, round_no, court_count, created_at)
-    VALUES (?, ?, ?, datetime('now'))`,
+    `INSERT INTO tournament_draw_rounds (tournament_id, round_no, draw_format, court_count, created_at)
+    VALUES (?, ?, ?, ?, datetime('now'))`,
     tournamentId,
     nextRoundNo,
+    drawFormat,
     usableCourts
   );
   const roundId = Number(insertedRound.meta?.last_row_id);
   assert(roundId > 0, "Failed to create draw round");
 
   const statements = [];
-  for (let index = 0; index < pairs.length; index += 1) {
-    const [playerAId, playerBId] = pairs[index];
+  for (let index = 0; index < assignments.length; index += 1) {
+    const assignment = assignments[index];
+    const playerAId = Number(assignment.teamA[0]);
+    const playerA2Id = assignment.teamA[1] == null ? null : Number(assignment.teamA[1]);
+    const playerBId = Number(assignment.teamB[0]);
+    const playerB2Id = assignment.teamB[1] == null ? null : Number(assignment.teamB[1]);
     const courtNo = index + 1;
-    const { low, high } = drawPairIds(playerAId, playerBId);
+    const assignedIds = [playerAId, playerA2Id, playerBId, playerB2Id].filter((id) => id != null);
 
     statements.push(
       db.prepare(
         `INSERT INTO tournament_draw_assignments (
-          tournament_id, round_id, court_no, player_a_id, player_b_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'))`
-      ).bind(tournamentId, roundId, courtNo, playerAId, playerBId)
+          tournament_id, round_id, court_no, player_a_id, player_a2_id, player_b_id, player_b2_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(tournamentId, roundId, courtNo, playerAId, playerA2Id, playerBId, playerB2Id)
     );
-    statements.push(
-      db.prepare(
-        `UPDATE tournament_draw_player_state
-        SET carry_over=0, assigned_count=assigned_count+1, updated_at=datetime('now')
-        WHERE tournament_id=? AND player_id=?`
-      ).bind(tournamentId, playerAId)
-    );
-    statements.push(
-      db.prepare(
-        `UPDATE tournament_draw_player_state
-        SET carry_over=0, assigned_count=assigned_count+1, updated_at=datetime('now')
-        WHERE tournament_id=? AND player_id=?`
-      ).bind(tournamentId, playerBId)
-    );
-    statements.push(
-      db.prepare(
-        `INSERT INTO tournament_draw_pair_stats (
-          tournament_id, player_low_id, player_high_id, pair_count, updated_at
-        ) VALUES (?, ?, ?, 1, datetime('now'))
-        ON CONFLICT(tournament_id, player_low_id, player_high_id)
-        DO UPDATE SET pair_count = pair_count + 1, updated_at=datetime('now')`
-      ).bind(tournamentId, low, high)
-    );
+
+    for (const playerId of assignedIds) {
+      statements.push(
+        db.prepare(
+          `UPDATE tournament_draw_player_state
+          SET carry_over=0, assigned_count=assigned_count+1, updated_at=datetime('now')
+          WHERE tournament_id=? AND player_id=?`
+        ).bind(tournamentId, playerId)
+      );
+    }
+
+    if (drawFormat === "DOUBLES") {
+      if (playerA2Id != null) {
+        const teamAIds = drawPairIds(playerAId, playerA2Id);
+        statements.push(
+          db.prepare(
+            `INSERT INTO tournament_draw_pair_stats (
+              tournament_id, player_low_id, player_high_id, pair_count, updated_at
+            ) VALUES (?, ?, ?, 1, datetime('now'))
+            ON CONFLICT(tournament_id, player_low_id, player_high_id)
+            DO UPDATE SET pair_count = pair_count + 1, updated_at=datetime('now')`
+          ).bind(tournamentId, teamAIds.low, teamAIds.high)
+        );
+      }
+      if (playerB2Id != null) {
+        const teamBIds = drawPairIds(playerBId, playerB2Id);
+        statements.push(
+          db.prepare(
+            `INSERT INTO tournament_draw_pair_stats (
+              tournament_id, player_low_id, player_high_id, pair_count, updated_at
+            ) VALUES (?, ?, ?, 1, datetime('now'))
+            ON CONFLICT(tournament_id, player_low_id, player_high_id)
+            DO UPDATE SET pair_count = pair_count + 1, updated_at=datetime('now')`
+          ).bind(tournamentId, teamBIds.low, teamBIds.high)
+        );
+      }
+    } else {
+      const singlePair = drawPairIds(playerAId, playerBId);
+      statements.push(
+        db.prepare(
+          `INSERT INTO tournament_draw_pair_stats (
+            tournament_id, player_low_id, player_high_id, pair_count, updated_at
+          ) VALUES (?, ?, ?, 1, datetime('now'))
+          ON CONFLICT(tournament_id, player_low_id, player_high_id)
+          DO UPDATE SET pair_count = pair_count + 1, updated_at=datetime('now')`
+        ).bind(tournamentId, singlePair.low, singlePair.high)
+      );
+    }
   }
 
   for (const playerId of waitingPlayerIds) {

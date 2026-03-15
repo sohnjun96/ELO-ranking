@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS tournament_draw_rounds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tournament_id INTEGER NOT NULL,
   round_no INTEGER NOT NULL CHECK (round_no >= 1),
+  draw_format TEXT NOT NULL DEFAULT 'DOUBLES' CHECK (draw_format IN ('SINGLES', 'DOUBLES')),
   court_count INTEGER NOT NULL CHECK (court_count >= 1),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
@@ -124,13 +125,22 @@ CREATE TABLE IF NOT EXISTS tournament_draw_assignments (
   round_id INTEGER NOT NULL,
   court_no INTEGER NOT NULL CHECK (court_no >= 1),
   player_a_id INTEGER NOT NULL,
+  player_a2_id INTEGER,
   player_b_id INTEGER NOT NULL,
+  player_b2_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
   FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,
   FOREIGN KEY (player_a_id) REFERENCES players(id),
+  FOREIGN KEY (player_a2_id) REFERENCES players(id),
   FOREIGN KEY (player_b_id) REFERENCES players(id),
+  FOREIGN KEY (player_b2_id) REFERENCES players(id),
   CHECK (player_a_id <> player_b_id),
+  CHECK (
+    (player_a2_id IS NULL AND player_b2_id IS NULL)
+    OR
+    (player_a2_id IS NOT NULL AND player_b2_id IS NOT NULL)
+  ),
   UNIQUE (round_id, court_no)
 );
 
