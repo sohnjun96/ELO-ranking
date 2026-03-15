@@ -10,6 +10,21 @@ const TABS = [
   { id: "admin", label: "관리", desc: "선수 · 규칙 조정" },
 ];
 
+const TAB_PATHS = {
+  dashboard: "/dashboard",
+  tournament: "/tournament",
+  records: "/records",
+  player: "/player",
+  stats: "/stats",
+  admin: "/admin",
+};
+
+function normalizePathname(pathname) {
+  const raw = String(pathname || "/").trim();
+  if (!raw || raw === "/") return "/";
+  return raw.endsWith("/") ? raw.slice(0, -1) : raw;
+}
+
 const DEFAULT_RULES = [
   { tournamentType: "REGULAR", displayName: "정규 대회", kFactor: 200, basePoints: 4 },
   { tournamentType: "ADHOC", displayName: "상시 대회", kFactor: 100, basePoints: 1 },
@@ -431,7 +446,7 @@ const app = createApp({
         playerQuery: "",
         adminQuery: "",
         adminStatus: "ALL",
-        isMobile: typeof window !== "undefined" ? window.matchMedia("(max-width: 1024px)").matches : false,
+        isMobile: false,
         desktopSidebarOpen: true,
         mobileSidebarOpen: false,
       },
@@ -476,13 +491,15 @@ const app = createApp({
 
       simResult: null,
     };
-  },  computed: {
+  },
+
+  computed: {
     isLoading() {
       return this.loading.count > 0;
     },
 
     isSidebarOpen() {
-      return this.ui.isMobile ? this.ui.mobileSidebarOpen : this.ui.desktopSidebarOpen;
+      return true;
     },
 
     activeRules() {
@@ -690,38 +707,57 @@ const app = createApp({
       return "";
     },
 
-    syncSidebarMode() {
-      const mobile = window.matchMedia("(max-width: 1024px)").matches;
-      if (this.ui.isMobile === mobile) return;
-      this.ui.isMobile = mobile;
-      if (mobile) {
-        this.ui.mobileSidebarOpen = false;
-      } else {
-        this.ui.mobileSidebarOpen = false;
-      }
+    toggleSidebar() {},
+
+    closeSidebar() {},
+
+    pathForTab(tabId) {
+      return TAB_PATHS[tabId] || TAB_PATHS.dashboard;
     },
 
-    toggleSidebar() {
-      if (this.ui.isMobile) {
-        this.ui.mobileSidebarOpen = !this.ui.mobileSidebarOpen;
-      } else {
-        this.ui.desktopSidebarOpen = !this.ui.desktopSidebarOpen;
-      }
+    tabFromPath(pathname) {
+      const normalized = normalizePathname(pathname);
+      if (normalized === "/" || normalized === "/index.html") return "dashboard";
+      const matched = Object.entries(TAB_PATHS).find(([, path]) => path === normalized);
+      return matched ? matched[0] : null;
     },
 
-    closeSidebar() {
-      if (this.ui.isMobile) {
-        this.ui.mobileSidebarOpen = false;
-      } else {
-        this.ui.desktopSidebarOpen = false;
+    navigateToTab(tabId, options = {}) {
+      const { replace = false } = options;
+      const safeTab = this.tabs.some((item) => item.id === tabId) ? tabId : "dashboard";
+      const targetPath = this.pathForTab(safeTab);
+
+      if (typeof window !== "undefined") {
+        const currentPath = normalizePathname(window.location.pathname);
+        if (currentPath !== targetPath) {
+          const nextMethod = replace ? "replaceState" : "pushState";
+          window.history[nextMethod]({}, "", targetPath);
+        }
       }
+
+      this.activeTab = safeTab;
+    },
+
+    syncTabFromLocation(options = {}) {
+      const { replaceUnknown = true } = options;
+      if (typeof window === "undefined") return;
+
+      const tabId = this.tabFromPath(window.location.pathname);
+      if (!tabId) {
+        if (replaceUnknown) this.navigateToTab("dashboard", { replace: true });
+        return;
+      }
+
+      if (normalizePathname(window.location.pathname) === "/" || normalizePathname(window.location.pathname) === "/index.html") {
+        this.navigateToTab(tabId, { replace: true });
+        return;
+      }
+
+      this.activeTab = tabId;
     },
 
     setActiveTab(tabId) {
-      this.activeTab = tabId;
-      if (this.ui.isMobile) {
-        this.ui.mobileSidebarOpen = false;
-      }
+      this.navigateToTab(tabId);
     },
 
     findPlayerByName(name) {
@@ -734,7 +770,7 @@ const app = createApp({
       const id = toInt(playerId, 0);
       if (id <= 0) return;
       this.selectedPlayerId = String(id);
-      this.activeTab = "player";
+      this.navigateToTab("player");
     },
 
     jumpToPlayerByName(playerName) {
@@ -750,7 +786,7 @@ const app = createApp({
       const id = toInt(tournamentId, 0);
       if (id <= 0) return;
       this.selectedRecordTournamentId = String(id);
-      this.activeTab = "records";
+      this.navigateToTab("records");
     },
 
     showToast(message, isError = false) {
@@ -1399,7 +1435,7 @@ const app = createApp({
             this.refreshAdminPlayers(),
           ]);
           this.lastSyncedAt = new Date().toISOString();
-          this.activeTab = "tournament";
+          this.navigateToTab("tournament", { replace: true });
         });
         this.showToast("대회를 시작했습니다.");
       } catch (error) {
@@ -1797,13 +1833,13 @@ const app = createApp({
   },
 
   async mounted() {
-    this.syncSidebarMode();
-    window.addEventListener("resize", this.syncSidebarMode);
+    this.syncTabFromLocation();
+    window.addEventListener("popstate", this.syncTabFromLocation);
     await this.refreshAll("초기 데이터를 불러오는 중...");
   },
 
   beforeUnmount() {
-    window.removeEventListener("resize", this.syncSidebarMode);
+    window.removeEventListener("popstate", this.syncTabFromLocation);
     this.destroyPlayerCharts();
     if (this.toast.timer) {
       clearTimeout(this.toast.timer);

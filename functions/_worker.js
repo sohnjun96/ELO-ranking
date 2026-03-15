@@ -1979,7 +1979,20 @@ export default {
     try {
       const response = await route(request, env);
       if (response) return withCors(response);
-      return env.ASSETS.fetch(request);
+
+      const assetResponse = await env.ASSETS.fetch(request);
+      if (assetResponse.status !== 404 || request.method !== "GET") {
+        return assetResponse;
+      }
+
+      const url = new URL(request.url);
+      const looksLikeFile = /\.[a-z0-9]+$/i.test(url.pathname);
+      if (url.pathname.startsWith("/api") || looksLikeFile) {
+        return assetResponse;
+      }
+
+      url.pathname = "/index.html";
+      return env.ASSETS.fetch(new Request(url.toString(), request));
     } catch (error) {
       return withCors(badRequest(error instanceof Error ? error.message : "Unknown error"));
     }
