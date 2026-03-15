@@ -60,6 +60,76 @@ function normalizeStatus(raw) {
   return ["OPEN", "FINALIZED", "CANCELED"].includes(value) ? value : null;
 }
 
+function expectedScore(myElo, opponentElo) {
+  const a = Number(myElo || 0);
+  const b = Number(opponentElo || 0);
+  return 1 / (1 + 10 ** ((b - a) / 400));
+}
+
+function roundTo(value, digits = 2) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n)) return 0;
+  const factor = 10 ** digits;
+  return Math.round(n * factor) / factor;
+}
+
+function quoteIdentifier(raw) {
+  const value = String(raw || "").trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
+    throw new Error(`Invalid identifier: ${raw}`);
+  }
+  return `"${value}"`;
+}
+
+const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_TABLES = [
+  "players",
+  "tournaments",
+  "tournament_participants",
+  "matches",
+  "match_player_deltas",
+  "rating_events",
+  "tournament_rules",
+  "app_settings",
+  "tournament_draw_rounds",
+  "tournament_draw_assignments",
+  "tournament_draw_waiting",
+  "tournament_draw_player_state",
+  "tournament_draw_pair_stats",
+];
+
+const SNAPSHOT_DELETE_ORDER = [
+  "match_player_deltas",
+  "rating_events",
+  "tournament_draw_waiting",
+  "tournament_draw_assignments",
+  "matches",
+  "tournament_participants",
+  "tournament_draw_rounds",
+  "tournament_draw_player_state",
+  "tournament_draw_pair_stats",
+  "tournaments",
+  "players",
+  "app_settings",
+  "tournament_rules",
+];
+
+const SNAPSHOT_INSERT_ORDER = [
+  "tournament_rules",
+  "app_settings",
+  "players",
+  "tournaments",
+  "tournament_participants",
+  "matches",
+  "match_player_deltas",
+  "rating_events",
+  "tournament_draw_rounds",
+  "tournament_draw_assignments",
+  "tournament_draw_waiting",
+  "tournament_draw_player_state",
+  "tournament_draw_pair_stats",
+];
+
 const LOGO_DATA_URL_RE = /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i;
 const MAX_LOGO_DATA_URL_LENGTH = 1_400_000;
 
@@ -523,6 +593,141 @@ async function adminBulkSetActive(db, body) {
     playerIds,
     players,
     overview: await adminOverview(db),
+  };
+}
+
+async function ensureSnapshotTables(db) {
+  await ensureTournamentRules(db);
+  await ensureAppSettings(db);
+  await ensureTournamentDrawTables(db);
+}
+
+function summarizeSnapshotData(data) {
+  const tableCounts = {};
+  let totalRows = 0;
+  for (const tableName of SNAPSHOT_TABLES) {
+    const count = Array.isArray(data?.[tableName]) ? data[tableName].length : 0;
+    tableCounts[tableName] = count;
+    totalRows += count;
+  }
+  return { tableCounts, totalRows };
+}
+
+async function exportSystemSnapshot(db) {
+  await ensureSnapshotTables(db);
+  const data = {};
+  for (const tableName of SNAPSHOT_TABLES) {
+    const tableSql = quoteIdentifier(tableName);
+    data[tableName] = await dbAll(db, `SELECT * FROM ${tableSql} ORDER BY rowid ASC`);
+  }
+  const summary = summarizeSnapshotData(data);
+  return {
+    snapshot: {
+      version: SNAPSHOT_VERSION,
+      exportedAt: new Date().toISOString(),
+      data,
+    },
+    summary,
+  };
+}
+
+function parseSnapshotBody(body) {
+  const candidate = body?.snapshot ?? body;
+  assert(candidate && typeof candidate === "object", "snapshot object is required");
+  const versionRaw = candidate.version == null ? SNAPSHOT_VERSION : Number(candidate.version);
+  assert(Number.isFinite(versionRaw), "snapshot version is invalid");
+  assert(Math.trunc(versionRaw) === SNAPSHOT_VERSION, `Unsupported snapshot version: ${candidate.version}`);
+  const dataSource = candidate.data && typeof candidate.data === "object" ? candidate.data : candidate;
+  const data = {};
+  for (const tableName of SNAPSHOT_TABLES) {
+    const rows = dataSource?.[tableName];
+    data[tableName] = Array.isArray(rows) ? rows : [];
+  }
+  return { version: SNAPSHOT_VERSION, data };
+}
+
+async function clearSystemData(db) {
+  await ensureSnapshotTables(db);
+  for (const tableName of SNAPSHOT_DELETE_ORDER) {
+    const tableSql = quoteIdentifier(tableName);
+    await dbRun(db, `DELETE FROM ${tableSql}`);
+  }
+  try {
+    await dbRun(db, `DELETE FROM sqlite_sequence`);
+  } catch {
+    // sqlite_sequence may not exist in some environments.
+  }
+}
+
+async function insertSnapshotRows(db, tableName, rows) {
+  if (!rows.length) return;
+  const tableSql = quoteIdentifier(tableName);
+  const columnInfo = await dbAll(db, `PRAGMA table_info(${tableSql})`);
+  const validColumns = new Set(columnInfo.map((col) => String(col.name || "")));
+  assert(validColumns.size > 0, `Snapshot table not found: ${tableName}`);
+
+  const statements = [];
+  const flush = async () => {
+    if (!statements.length) return;
+    await db.batch(statements.splice(0, statements.length));
+  };
+
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const columns = Object.keys(row).filter((key) => validColumns.has(key));
+    if (!columns.length) continue;
+    const columnSql = columns.map((col) => quoteIdentifier(col)).join(", ");
+    const valuesSql = columns.map(() => "?").join(", ");
+    const values = columns.map((col) => (row[col] === undefined ? null : row[col]));
+    statements.push(db.prepare(`INSERT INTO ${tableSql} (${columnSql}) VALUES (${valuesSql})`).bind(...values));
+    if (statements.length >= 64) {
+      await flush();
+    }
+  }
+
+  await flush();
+}
+
+async function systemDataSummary(db) {
+  const row = await dbFirst(
+    db,
+    `SELECT
+      (SELECT COUNT(*) FROM players) AS players,
+      (SELECT COUNT(*) FROM tournaments) AS tournaments,
+      (SELECT COUNT(*) FROM matches WHERE status='ACTIVE') AS matches,
+      (SELECT COUNT(*) FROM rating_events) AS ratingEvents`
+  );
+  return {
+    players: Number(row?.players || 0),
+    tournaments: Number(row?.tournaments || 0),
+    matches: Number(row?.matches || 0),
+    ratingEvents: Number(row?.ratingEvents || 0),
+  };
+}
+
+async function importSystemSnapshot(db, body) {
+  const parsed = parseSnapshotBody(body);
+  await clearSystemData(db);
+  for (const tableName of SNAPSHOT_INSERT_ORDER) {
+    await insertSnapshotRows(db, tableName, parsed.data[tableName]);
+  }
+  await ensureTournamentRules(db);
+  await ensureAppSettings(db);
+
+  return {
+    version: parsed.version,
+    summary: await systemDataSummary(db),
+  };
+}
+
+async function resetSystemSnapshot(db) {
+  await clearSystemData(db);
+  await ensureTournamentRules(db);
+  await ensureAppSettings(db);
+  return {
+    summary: await systemDataSummary(db),
+    tournamentRules: await listTournamentRules(db),
+    appSettings: await getAppSettings(db),
   };
 }
 
@@ -1790,16 +1995,24 @@ async function playerStats(db, playerId) {
       m.id, m.match_format AS matchFormat, m.match_order AS matchOrder,
       m.score_a AS scoreA, m.score_b AS scoreB, m.delta_team_a AS deltaTeamA, m.delta_team_b AS deltaTeamB,
       t.id AS tournamentId, t.name AS tournamentName, t.tournament_date AS tournamentDate, t.tournament_type AS tournamentType,
-      pa1.id AS teamAPlayer1Id, pa1.name AS teamAPlayer1Name,
-      pa2.id AS teamAPlayer2Id, pa2.name AS teamAPlayer2Name,
-      pb1.id AS teamBPlayer1Id, pb1.name AS teamBPlayer1Name,
-      pb2.id AS teamBPlayer2Id, pb2.name AS teamBPlayer2Name
+      pa1.id AS teamAPlayer1Id, pa1.name AS teamAPlayer1Name, pa1.current_elo AS teamAPlayer1CurrentElo,
+      pa2.id AS teamAPlayer2Id, pa2.name AS teamAPlayer2Name, pa2.current_elo AS teamAPlayer2CurrentElo,
+      pb1.id AS teamBPlayer1Id, pb1.name AS teamBPlayer1Name, pb1.current_elo AS teamBPlayer1CurrentElo,
+      pb2.id AS teamBPlayer2Id, pb2.name AS teamBPlayer2Name, pb2.current_elo AS teamBPlayer2CurrentElo,
+      ta1.seed_elo AS teamAPlayer1SeedElo,
+      ta2.seed_elo AS teamAPlayer2SeedElo,
+      tb1.seed_elo AS teamBPlayer1SeedElo,
+      tb2.seed_elo AS teamBPlayer2SeedElo
     FROM matches m
     JOIN tournaments t ON t.id = m.tournament_id
     JOIN players pa1 ON pa1.id = m.team_a_player1_id
     LEFT JOIN players pa2 ON pa2.id = m.team_a_player2_id
     JOIN players pb1 ON pb1.id = m.team_b_player1_id
     LEFT JOIN players pb2 ON pb2.id = m.team_b_player2_id
+    LEFT JOIN tournament_participants ta1 ON ta1.tournament_id = m.tournament_id AND ta1.player_id = m.team_a_player1_id
+    LEFT JOIN tournament_participants ta2 ON ta2.tournament_id = m.tournament_id AND ta2.player_id = m.team_a_player2_id
+    LEFT JOIN tournament_participants tb1 ON tb1.tournament_id = m.tournament_id AND tb1.player_id = m.team_b_player1_id
+    LEFT JOIN tournament_participants tb2 ON tb2.tournament_id = m.tournament_id AND tb2.player_id = m.team_b_player2_id
     WHERE m.status='ACTIVE' AND t.status != 'CANCELED'
       AND (m.team_a_player1_id=? OR m.team_a_player2_id=? OR m.team_b_player1_id=? OR m.team_b_player2_id=?)
     ORDER BY t.tournament_date DESC, m.match_order DESC, m.id DESC`,
@@ -1817,7 +2030,26 @@ async function playerStats(db, playerId) {
   let singlesWins = 0;
   let doublesTotal = 0;
   let doublesWins = 0;
+  let expectedTotal = 0;
+  let actualTotal = 0;
+  let singlesExpectedTotal = 0;
+  let singlesActualTotal = 0;
+  let doublesExpectedTotal = 0;
+  let doublesActualTotal = 0;
   const opponentMap = new Map();
+  const partnerMap = new Map();
+
+  const resultPoint = (result) => {
+    if (result === "WIN") return 1;
+    if (result === "DRAW") return 0.5;
+    return 0;
+  };
+
+  const teamAverageElo = (...values) => {
+    const list = values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+    if (!list.length) return 2000;
+    return list.reduce((sum, value) => sum + value, 0) / list.length;
+  };
 
   const normalizedMatches = matches.map((row) => {
     const inTeamA = Number(row.teamAPlayer1Id) === playerId || Number(row.teamAPlayer2Id) === playerId;
@@ -1826,15 +2058,33 @@ async function playerStats(db, playerId) {
     const myDelta = inTeamA ? Number(row.deltaTeamA) : Number(row.deltaTeamB);
     const opponentDelta = inTeamA ? Number(row.deltaTeamB) : Number(row.deltaTeamA);
     const result = myScore > opponentScore ? "WIN" : myScore < opponentScore ? "LOSE" : "DRAW";
+    const actualPoint = resultPoint(result);
+
+    const teamAElo = teamAverageElo(
+      row.teamAPlayer1SeedElo == null ? row.teamAPlayer1CurrentElo : row.teamAPlayer1SeedElo,
+      row.teamAPlayer2Id == null ? null : row.teamAPlayer2SeedElo == null ? row.teamAPlayer2CurrentElo : row.teamAPlayer2SeedElo
+    );
+    const teamBElo = teamAverageElo(
+      row.teamBPlayer1SeedElo == null ? row.teamBPlayer1CurrentElo : row.teamBPlayer1SeedElo,
+      row.teamBPlayer2Id == null ? null : row.teamBPlayer2SeedElo == null ? row.teamBPlayer2CurrentElo : row.teamBPlayer2SeedElo
+    );
+    const myTeamElo = inTeamA ? teamAElo : teamBElo;
+    const opponentTeamElo = inTeamA ? teamBElo : teamAElo;
+    const expectedPoint = expectedScore(myTeamElo, opponentTeamElo);
+    const performanceDelta = actualPoint - expectedPoint;
 
     total += 1;
     if (result === "WIN") wins += 1;
     if (result === "LOSE") losses += 1;
     if (result === "DRAW") draws += 1;
+    expectedTotal += expectedPoint;
+    actualTotal += actualPoint;
 
     if (row.matchFormat === "SINGLES") {
       singlesTotal += 1;
       if (result === "WIN") singlesWins += 1;
+      singlesExpectedTotal += expectedPoint;
+      singlesActualTotal += actualPoint;
 
       const opponent = inTeamA ? row.teamBPlayer1Name : row.teamAPlayer1Name;
       const current = opponentMap.get(opponent) || { opponent, matches: 0, wins: 0, losses: 0, draws: 0 };
@@ -1846,6 +2096,49 @@ async function playerStats(db, playerId) {
     } else {
       doublesTotal += 1;
       if (result === "WIN") doublesWins += 1;
+      doublesExpectedTotal += expectedPoint;
+      doublesActualTotal += actualPoint;
+
+      let partnerId = null;
+      let partnerName = "";
+      if (inTeamA) {
+        if (Number(row.teamAPlayer1Id) === playerId) {
+          partnerId = row.teamAPlayer2Id == null ? null : Number(row.teamAPlayer2Id);
+          partnerName = row.teamAPlayer2Name || "";
+        } else {
+          partnerId = Number(row.teamAPlayer1Id);
+          partnerName = row.teamAPlayer1Name || "";
+        }
+      } else if (Number(row.teamBPlayer1Id) === playerId) {
+        partnerId = row.teamBPlayer2Id == null ? null : Number(row.teamBPlayer2Id);
+        partnerName = row.teamBPlayer2Name || "";
+      } else {
+        partnerId = Number(row.teamBPlayer1Id);
+        partnerName = row.teamBPlayer1Name || "";
+      }
+
+      if (partnerId != null && Number.isFinite(partnerId) && partnerId > 0) {
+        const key = Number(partnerId);
+        const currentPartner = partnerMap.get(key) || {
+          partnerId: key,
+          partnerName: partnerName || `선수 ${key}`,
+          matches: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          expectedTotal: 0,
+          actualTotal: 0,
+          eloDeltaTotal: 0,
+        };
+        currentPartner.matches += 1;
+        if (result === "WIN") currentPartner.wins += 1;
+        if (result === "LOSE") currentPartner.losses += 1;
+        if (result === "DRAW") currentPartner.draws += 1;
+        currentPartner.expectedTotal += expectedPoint;
+        currentPartner.actualTotal += actualPoint;
+        currentPartner.eloDeltaTotal += myDelta;
+        partnerMap.set(key, currentPartner);
+      }
     }
 
     return {
@@ -1863,10 +2156,73 @@ async function playerStats(db, playerId) {
       myDelta,
       opponentDelta,
       result,
+      myTeamElo: roundTo(myTeamElo, 1),
+      opponentTeamElo: roundTo(opponentTeamElo, 1),
+      expectedScore: roundTo(expectedPoint, 3),
+      actualScore: roundTo(actualPoint, 3),
+      performanceDelta: roundTo(performanceDelta, 3),
     };
   });
 
   const opponents = [...opponentMap.values()].sort((a, b) => b.matches - a.matches || b.wins - a.wins || a.opponent.localeCompare(b.opponent));
+  const overallDoublesWinRate = doublesTotal ? (doublesWins / doublesTotal) * 100 : 0;
+  const partnerSynergy = [...partnerMap.values()]
+    .map((item) => {
+      const matchesCount = Number(item.matches || 0);
+      const winRate = matchesCount > 0 ? (Number(item.wins || 0) * 100) / matchesCount : 0;
+      const expectedRate = matchesCount > 0 ? (Number(item.expectedTotal || 0) * 100) / matchesCount : 0;
+      const actualRate = matchesCount > 0 ? (Number(item.actualTotal || 0) * 100) / matchesCount : 0;
+      const overUnder = Number(item.actualTotal || 0) - Number(item.expectedTotal || 0);
+      const overUnderPerMatchPct = matchesCount > 0 ? (overUnder * 100) / matchesCount : 0;
+      const averageDelta = matchesCount > 0 ? Number(item.eloDeltaTotal || 0) / matchesCount : 0;
+      const synergyIndex = Math.round((winRate - overallDoublesWinRate) * 0.7 + overUnderPerMatchPct * 0.3);
+      return {
+        partnerId: Number(item.partnerId),
+        partnerName: item.partnerName,
+        matches: matchesCount,
+        wins: Number(item.wins || 0),
+        losses: Number(item.losses || 0),
+        draws: Number(item.draws || 0),
+        winRate: roundTo(winRate, 1),
+        expectedRate: roundTo(expectedRate, 1),
+        actualRate: roundTo(actualRate, 1),
+        overUnder: roundTo(overUnder, 2),
+        averageDelta: roundTo(averageDelta, 2),
+        synergyIndex,
+      };
+    })
+    .sort((a, b) => b.synergyIndex - a.synergyIndex || b.matches - a.matches || b.winRate - a.winRate || a.partnerName.localeCompare(b.partnerName));
+
+  const recentFormMatches = normalizedMatches.slice(0, 10);
+  let weightedPoints = 0;
+  let weightedMaxPoints = 0;
+  let recentExpected = 0;
+  let recentActual = 0;
+  let recentWins = 0;
+  let recentLosses = 0;
+  let recentDraws = 0;
+  for (let index = 0; index < recentFormMatches.length; index += 1) {
+    const match = recentFormMatches[index];
+    const weight = Math.max(0.55, 1 - index * 0.05);
+    const matchPoints = match.result === "WIN" ? 3 : match.result === "DRAW" ? 1 : 0;
+    weightedPoints += matchPoints * weight;
+    weightedMaxPoints += 3 * weight;
+    recentExpected += Number(match.expectedScore || 0);
+    recentActual += Number(match.actualScore || 0);
+    if (match.result === "WIN") recentWins += 1;
+    if (match.result === "LOSE") recentLosses += 1;
+    if (match.result === "DRAW") recentDraws += 1;
+  }
+
+  let streakType = "NONE";
+  let streakCount = 0;
+  if (recentFormMatches.length > 0) {
+    streakType = recentFormMatches[0].result;
+    for (const match of recentFormMatches) {
+      if (match.result !== streakType) break;
+      streakCount += 1;
+    }
+  }
 
   return {
     player: { id: Number(player.id), name: player.name, currentElo: Number(player.currentElo), rank: Number(player.rank) },
@@ -1894,9 +2250,48 @@ async function playerStats(db, playerId) {
       delta: Number(e.delta),
       eloAfter: Number(e.eloAfter),
       note: e.note,
-    })),
+      })),
     matches: normalizedMatches,
     opponents,
+    advanced: {
+      performance: {
+        expectedScore: roundTo(expectedTotal, 2),
+        actualScore: roundTo(actualTotal, 2),
+        overUnder: roundTo(actualTotal - expectedTotal, 2),
+        expectedWinRate: total ? roundTo((expectedTotal / total) * 100, 1) : 0,
+        actualWinRate: total ? roundTo((actualTotal / total) * 100, 1) : 0,
+        singles: {
+          matches: singlesTotal,
+          expectedScore: roundTo(singlesExpectedTotal, 2),
+          actualScore: roundTo(singlesActualTotal, 2),
+          overUnder: roundTo(singlesActualTotal - singlesExpectedTotal, 2),
+          expectedWinRate: singlesTotal ? roundTo((singlesExpectedTotal / singlesTotal) * 100, 1) : 0,
+          actualWinRate: singlesTotal ? roundTo((singlesActualTotal / singlesTotal) * 100, 1) : 0,
+        },
+        doubles: {
+          matches: doublesTotal,
+          expectedScore: roundTo(doublesExpectedTotal, 2),
+          actualScore: roundTo(doublesActualTotal, 2),
+          overUnder: roundTo(doublesActualTotal - doublesExpectedTotal, 2),
+          expectedWinRate: doublesTotal ? roundTo((doublesExpectedTotal / doublesTotal) * 100, 1) : 0,
+          actualWinRate: doublesTotal ? roundTo((doublesActualTotal / doublesTotal) * 100, 1) : 0,
+        },
+      },
+      recentForm: {
+        sampleSize: recentFormMatches.length,
+        wins: recentWins,
+        losses: recentLosses,
+        draws: recentDraws,
+        formIndex: recentFormMatches.length > 0 && weightedMaxPoints > 0 ? Math.round((weightedPoints / weightedMaxPoints) * 100) : 0,
+        momentum: recentFormMatches.length > 0 ? roundTo(((recentActual - recentExpected) / recentFormMatches.length) * 100, 1) : 0,
+        expectedScore: roundTo(recentExpected, 2),
+        actualScore: roundTo(recentActual, 2),
+        overUnder: roundTo(recentActual - recentExpected, 2),
+        streakType,
+        streakCount,
+      },
+      partnerSynergy,
+    },
   };
 }
 
@@ -2065,6 +2460,22 @@ async function route(request, env) {
     if (segments.length === 2 && segments[1] === "overview") {
       if (request.method !== "GET") return methodNotAllowed();
       return json({ ok: true, overview: await adminOverview(env.DB) });
+    }
+
+    if (segments.length === 3 && segments[1] === "system" && segments[2] === "export") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return json({ ok: true, ...(await exportSystemSnapshot(env.DB)) });
+    }
+
+    if (segments.length === 3 && segments[1] === "system" && segments[2] === "import") {
+      if (request.method !== "POST") return methodNotAllowed();
+      const body = await readJson(request);
+      return json({ ok: true, ...(await importSystemSnapshot(env.DB, body)) });
+    }
+
+    if (segments.length === 3 && segments[1] === "system" && segments[2] === "reset") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return json({ ok: true, ...(await resetSystemSnapshot(env.DB)) });
     }
 
     if (segments.length === 2 && segments[1] === "players") {

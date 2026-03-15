@@ -50,6 +50,12 @@ function formatSigned(value) {
   return `${n >= 0 ? "+" : ""}${n}`;
 }
 
+function formatSignedFixed(value, digits = 1) {
+  const n = Number(value || 0);
+  const safe = Number.isFinite(n) ? n : 0;
+  return `${safe >= 0 ? "+" : ""}${safe.toFixed(digits)}`;
+}
+
 function formatDateTime(value, includeYear = false) {
   if (!value) return "-";
   const d = value instanceof Date ? value : new Date(value);
@@ -502,6 +508,7 @@ const app = createApp({
         tournamentEditDate: "",
         tournamentEditType: "REGULAR",
         drawCourtCount: 2,
+        adminImportFileName: "",
       },
 
       modals: {
@@ -839,6 +846,7 @@ const app = createApp({
   methods: {
     formatNum,
     formatSigned,
+    formatSignedFixed,
     formatDateTime,
     matchFormatLabel,
     tournamentStatusLabel,
@@ -1771,6 +1779,7 @@ const app = createApp({
     async finalizeTournament() {
       if (!this.openTournament) return;
       if (!window.confirm("대회를 종료하고 ELO를 반영할까요?")) return;
+      const finalizedTournamentId = toInt(this.openTournament.id);
 
       try {
         await this.withLoading("대회를 종료하는 중...", async () => {
@@ -1786,6 +1795,15 @@ const app = createApp({
         });
         this.modals.matchEntry = false;
         this.modals.tournamentSettings = false;
+        if (finalizedTournamentId > 0) {
+          const nextId = String(finalizedTournamentId);
+          const sameSelection = this.selectedRecordTournamentId === nextId;
+          this.selectedRecordTournamentId = nextId;
+          if (sameSelection) {
+            await this.loadRecordBySelection();
+          }
+          this.setActiveTab("records");
+        }
         this.showToast("대회를 종료하고 점수를 반영했습니다.");
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "대회 종료 실패", true);
@@ -1880,6 +1898,60 @@ const app = createApp({
                   draws: toInt(op.draws),
                 }))
               : [],
+            advanced: {
+              performance: {
+                expectedScore: Number(data.advanced?.performance?.expectedScore || 0),
+                actualScore: Number(data.advanced?.performance?.actualScore || 0),
+                overUnder: Number(data.advanced?.performance?.overUnder || 0),
+                expectedWinRate: Number(data.advanced?.performance?.expectedWinRate || 0),
+                actualWinRate: Number(data.advanced?.performance?.actualWinRate || 0),
+                singles: {
+                  matches: toInt(data.advanced?.performance?.singles?.matches),
+                  expectedScore: Number(data.advanced?.performance?.singles?.expectedScore || 0),
+                  actualScore: Number(data.advanced?.performance?.singles?.actualScore || 0),
+                  overUnder: Number(data.advanced?.performance?.singles?.overUnder || 0),
+                  expectedWinRate: Number(data.advanced?.performance?.singles?.expectedWinRate || 0),
+                  actualWinRate: Number(data.advanced?.performance?.singles?.actualWinRate || 0),
+                },
+                doubles: {
+                  matches: toInt(data.advanced?.performance?.doubles?.matches),
+                  expectedScore: Number(data.advanced?.performance?.doubles?.expectedScore || 0),
+                  actualScore: Number(data.advanced?.performance?.doubles?.actualScore || 0),
+                  overUnder: Number(data.advanced?.performance?.doubles?.overUnder || 0),
+                  expectedWinRate: Number(data.advanced?.performance?.doubles?.expectedWinRate || 0),
+                  actualWinRate: Number(data.advanced?.performance?.doubles?.actualWinRate || 0),
+                },
+              },
+              recentForm: {
+                sampleSize: toInt(data.advanced?.recentForm?.sampleSize),
+                wins: toInt(data.advanced?.recentForm?.wins),
+                losses: toInt(data.advanced?.recentForm?.losses),
+                draws: toInt(data.advanced?.recentForm?.draws),
+                formIndex: toInt(data.advanced?.recentForm?.formIndex),
+                momentum: Number(data.advanced?.recentForm?.momentum || 0),
+                expectedScore: Number(data.advanced?.recentForm?.expectedScore || 0),
+                actualScore: Number(data.advanced?.recentForm?.actualScore || 0),
+                overUnder: Number(data.advanced?.recentForm?.overUnder || 0),
+                streakType: String(data.advanced?.recentForm?.streakType || "NONE"),
+                streakCount: toInt(data.advanced?.recentForm?.streakCount),
+              },
+              partnerSynergy: Array.isArray(data.advanced?.partnerSynergy)
+                ? data.advanced.partnerSynergy.map((row) => ({
+                    partnerId: toInt(row.partnerId),
+                    partnerName: row.partnerName || "",
+                    matches: toInt(row.matches),
+                    wins: toInt(row.wins),
+                    losses: toInt(row.losses),
+                    draws: toInt(row.draws),
+                    winRate: Number(row.winRate || 0),
+                    expectedRate: Number(row.expectedRate || 0),
+                    actualRate: Number(row.actualRate || 0),
+                    overUnder: Number(row.overUnder || 0),
+                    averageDelta: Number(row.averageDelta || 0),
+                    synergyIndex: toInt(row.synergyIndex),
+                  }))
+                : [],
+            },
           };
           this.schedulePlayerChartsRender();
         });
@@ -2036,6 +2108,102 @@ const app = createApp({
         this.showToast("기본 로고로 복원했습니다.");
       } catch (error) {
         this.showToast(error instanceof Error ? error.message : "기본 로고 복원 실패", true);
+      }
+    },
+
+    async exportSystemData() {
+      try {
+        await this.withLoading("백업 파일을 생성하는 중...", async () => {
+          const data = await requestApi("/api/admin/system/export");
+          const snapshot = data?.snapshot;
+          if (!snapshot || typeof snapshot !== "object") {
+            throw new Error("백업 데이터 생성에 실패했습니다.");
+          }
+
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const filename = `elo-backup-${stamp}.json`;
+          const payload = `${JSON.stringify(snapshot, null, 2)}\n`;
+          const blob = new Blob([payload], { type: "application/json;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = filename;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          URL.revokeObjectURL(url);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("백업 파일을 다운로드했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "백업 내보내기 실패", true);
+      }
+    },
+
+    openImportSystemDataPicker() {
+      const input = this.$refs.systemImportFileInput;
+      if (!input) return;
+      input.value = "";
+      input.click();
+    },
+
+    async handleImportSystemDataFileChange(event) {
+      const input = event?.target;
+      const file = input?.files?.[0];
+      if (!file) return;
+
+      const filename = String(file.name || "").trim();
+      if (!window.confirm("현재 데이터를 선택한 백업 파일 내용으로 덮어씁니다. 계속할까요?")) {
+        input.value = "";
+        return;
+      }
+
+      try {
+        const text = await file.text();
+        const snapshot = JSON.parse(text);
+        await this.withLoading("백업 파일을 불러오는 중...", async () => {
+          await requestApi("/api/admin/system/import", "POST", { snapshot });
+          await Promise.all([
+            this.refreshBootstrap(),
+            this.refreshTournaments(),
+            this.refreshOverview(),
+            this.refreshAdminPlayers(),
+            this.refreshAdminOverview(),
+          ]);
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.forms.adminImportFileName = filename;
+        this.showToast("백업 파일을 불러왔습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "백업 불러오기 실패", true);
+      } finally {
+        if (input) input.value = "";
+      }
+    },
+
+    async resetSystemData() {
+      if (!window.confirm("모든 선수/대회/경기/점수 기록을 초기화합니다. 계속할까요?")) return;
+      if (!window.confirm("이 작업은 되돌릴 수 없습니다. 정말 초기화할까요?")) return;
+
+      try {
+        await this.withLoading("전체 데이터를 초기화하는 중...", async () => {
+          await requestApi("/api/admin/system/reset", "POST");
+          await Promise.all([
+            this.refreshBootstrap(),
+            this.refreshTournaments(),
+            this.refreshOverview(),
+            this.refreshAdminPlayers(),
+            this.refreshAdminOverview(),
+          ]);
+          this.selectedRecordTournamentId = "";
+          this.recordTournament = null;
+          this.selectedPlayerId = "";
+          this.playerStats = null;
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.showToast("전체 데이터를 초기화했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "데이터 초기화 실패", true);
       }
     },
 
@@ -2352,15 +2520,6 @@ const app = createApp({
         <div class="workspace">
           <main class="panel-stack">
             <section v-show="activeTab === 'dashboard'" class="panel-group">
-              <article class="surface accent">
-                <h3>선수 등록</h3>
-                <p class="muted">신규 선수는 활성 선수 평균 ELO를 기준으로 자동 초기화됩니다.</p>
-                <form class="inline-form" @submit.prevent="submitPlayer">
-                  <input v-model.trim="forms.playerName" placeholder="선수 이름" required />
-                  <button type="submit" class="btn primary">등록</button>
-                </form>
-              </article>
-
               <article class="surface">
                 <header class="surface-head">
                   <h3>현재 랭킹</h3>
@@ -2756,6 +2915,131 @@ const app = createApp({
                 </div>
               </article>
 
+              <article v-if="playerStats && playerStats.advanced" class="surface">
+                <h3>고급 분석</h3>
+                <div class="advanced-kpi-grid">
+                  <div class="advanced-kpi-card">
+                    <span>기대 대비 실적 (O/U)</span>
+                    <strong :class="{ up: playerStats.advanced.performance.overUnder > 0, down: playerStats.advanced.performance.overUnder < 0 }">
+                      {{ formatSignedFixed(playerStats.advanced.performance.overUnder, 2) }}
+                    </strong>
+                    <small>
+                      실제 {{ playerStats.advanced.performance.actualScore.toFixed(2) }}점 / 기대 {{ playerStats.advanced.performance.expectedScore.toFixed(2) }}점
+                    </small>
+                  </div>
+                  <div class="advanced-kpi-card">
+                    <span>최근 10경기 폼 지수</span>
+                    <strong>{{ playerStats.advanced.recentForm.formIndex }}</strong>
+                    <small>
+                      {{ playerStats.advanced.recentForm.wins }}승 {{ playerStats.advanced.recentForm.losses }}패 {{ playerStats.advanced.recentForm.draws }}무
+                    </small>
+                  </div>
+                  <div class="advanced-kpi-card">
+                    <span>폼 모멘텀</span>
+                    <strong :class="{ up: playerStats.advanced.recentForm.momentum > 0, down: playerStats.advanced.recentForm.momentum < 0 }">
+                      {{ formatSignedFixed(playerStats.advanced.recentForm.momentum, 1) }}%p
+                    </strong>
+                    <small>
+                      현재 {{ playerStats.advanced.recentForm.streakType === 'NONE' ? '-' : playerStats.advanced.recentForm.streakType }} {{ playerStats.advanced.recentForm.streakCount }}연속
+                    </small>
+                  </div>
+                </div>
+
+                <div class="panel-grid two advanced-panel-grid">
+                  <article class="surface inset">
+                    <h3>기대승률 대비 실적 상세</h3>
+                    <div class="table-shell compact-table">
+                      <table class="data-table">
+                        <thead>
+                          <tr>
+                            <th>구분</th>
+                            <th class="num-col">경기</th>
+                            <th class="num-col">기대 승률</th>
+                            <th class="num-col">실제 승률</th>
+                            <th class="num-col">O/U</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>전체</td>
+                            <td class="num-col">{{ playerStats.summary.total }}</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.expectedWinRate.toFixed(1) }}%</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.actualWinRate.toFixed(1) }}%</td>
+                            <td
+                              class="num-col"
+                              :class="{ up: playerStats.advanced.performance.overUnder > 0, down: playerStats.advanced.performance.overUnder < 0 }"
+                            >
+                              {{ formatSignedFixed(playerStats.advanced.performance.overUnder, 2) }}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>단식</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.singles.matches }}</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.singles.expectedWinRate.toFixed(1) }}%</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.singles.actualWinRate.toFixed(1) }}%</td>
+                            <td
+                              class="num-col"
+                              :class="{ up: playerStats.advanced.performance.singles.overUnder > 0, down: playerStats.advanced.performance.singles.overUnder < 0 }"
+                            >
+                              {{ formatSignedFixed(playerStats.advanced.performance.singles.overUnder, 2) }}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>복식</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.doubles.matches }}</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.doubles.expectedWinRate.toFixed(1) }}%</td>
+                            <td class="num-col">{{ playerStats.advanced.performance.doubles.actualWinRate.toFixed(1) }}%</td>
+                            <td
+                              class="num-col"
+                              :class="{ up: playerStats.advanced.performance.doubles.overUnder > 0, down: playerStats.advanced.performance.doubles.overUnder < 0 }"
+                            >
+                              {{ formatSignedFixed(playerStats.advanced.performance.doubles.overUnder, 2) }}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+
+                  <article class="surface inset">
+                    <h3>복식 파트너 시너지</h3>
+                    <div class="table-shell compact-table">
+                      <table class="data-table">
+                        <thead>
+                          <tr>
+                            <th>파트너</th>
+                            <th class="num-col">경기</th>
+                            <th class="num-col">승률</th>
+                            <th class="num-col">평균 Δ</th>
+                            <th class="num-col">시너지</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="partner in playerStats.advanced.partnerSynergy.slice(0, 8)" :key="'partner-synergy-' + partner.partnerId">
+                            <td>
+                              <button type="button" class="inline-link table-link" @click="jumpToPlayerById(partner.partnerId)">
+                                {{ partner.partnerName }}
+                              </button>
+                            </td>
+                            <td class="num-col">{{ partner.matches }}</td>
+                            <td class="num-col">{{ partner.winRate.toFixed(1) }}%</td>
+                            <td class="num-col" :class="{ up: partner.averageDelta > 0, down: partner.averageDelta < 0 }">
+                              {{ formatSignedFixed(partner.averageDelta, 2) }}
+                            </td>
+                            <td class="num-col" :class="{ up: partner.synergyIndex > 0, down: partner.synergyIndex < 0 }">
+                              {{ formatSigned(partner.synergyIndex) }}
+                            </td>
+                          </tr>
+                          <tr v-if="!playerStats.advanced.partnerSynergy.length">
+                            <td colspan="5" class="empty-row">복식 파트너 데이터가 없습니다.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+                </div>
+              </article>
+
               <article v-if="playerStats" class="surface">
                 <h3>경기 기록 통계</h3>
                 <div class="chart-wrap">
@@ -2971,6 +3255,33 @@ const app = createApp({
                 <p class="muted" v-if="adminOverview.lastAdjustmentAt">
                   최근 점수 조정: {{ formatDateTime(adminOverview.lastAdjustmentAt, true) }}
                 </p>
+              </article>
+
+              <article class="surface">
+                <h3>데이터 관리</h3>
+                <p class="muted">운영 데이터 백업 파일(JSON) 생성, 복원, 전체 초기화를 수행합니다.</p>
+                <div class="inline-form admin-data-actions">
+                  <button type="button" class="btn primary" @click="exportSystemData">내보내기</button>
+                  <button type="button" class="btn ghost" @click="openImportSystemDataPicker">불러오기</button>
+                  <button type="button" class="btn danger" @click="resetSystemData">초기화</button>
+                  <input
+                    ref="systemImportFileInput"
+                    class="file-hidden"
+                    type="file"
+                    accept=".json,application/json"
+                    @change="handleImportSystemDataFileChange"
+                  />
+                </div>
+                <p v-if="forms.adminImportFileName" class="muted">최근 불러온 파일: {{ forms.adminImportFileName }}</p>
+              </article>
+
+              <article class="surface accent">
+                <h3>선수 등록</h3>
+                <p class="muted">신규 선수는 활성 선수 평균 ELO를 기준으로 자동 초기화됩니다.</p>
+                <form class="inline-form" @submit.prevent="submitPlayer">
+                  <input v-model.trim="forms.playerName" placeholder="선수 이름" required />
+                  <button type="submit" class="btn primary">등록</button>
+                </form>
               </article>
 
               <div class="panel-grid two">

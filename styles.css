@@ -1196,8 +1196,8 @@ select:focus {
 }
 
 .record-title {
-  flex: 1 1 420px;
-  min-width: 240px;
+  flex: 1 1 340px;
+  min-width: 200px;
 }
 
 .record-selector-form {
@@ -1222,8 +1222,8 @@ select:focus {
 }
 
 .player-title {
-  flex: 1 1 420px;
-  min-width: 240px;
+  flex: 1 1 340px;
+  min-width: 200px;
 }
 
 .player-selector-form {
@@ -1243,7 +1243,7 @@ select:focus {
   flex: 0 1 200px;
 }
 
-.tournament-stats-table .num-col {
+.num-col {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -1351,6 +1351,55 @@ select:focus {
 
 .player-summary {
   grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.advanced-kpi-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.advanced-kpi-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.advanced-kpi-card span {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.advanced-kpi-card strong {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.advanced-kpi-card small {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.advanced-panel-grid {
+  align-items: start;
+}
+
+.surface.inset {
+  box-shadow: none;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.admin-data-actions {
+  align-items: center;
+}
+
+.file-hidden {
+  display: none;
 }
 
 .chart-wrap {
@@ -1832,6 +1881,10 @@ select:focus {
   .player-summary {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .advanced-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1024px) {
@@ -1889,6 +1942,10 @@ select:focus {
   }
 
   .admin-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .advanced-kpi-grid {
     grid-template-columns: 1fr;
   }
 
