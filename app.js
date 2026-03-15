@@ -141,6 +141,10 @@ function normalizeMatch(row) {
     tournamentType: row?.tournamentType || "",
     matchOrder: row?.matchOrder == null ? null : toInt(row?.matchOrder),
     matchFormat: row?.matchFormat || "SINGLES",
+    teamAPlayer1Id: row?.teamAPlayer1Id == null ? null : toInt(row?.teamAPlayer1Id),
+    teamAPlayer2Id: row?.teamAPlayer2Id == null ? null : toInt(row?.teamAPlayer2Id),
+    teamBPlayer1Id: row?.teamBPlayer1Id == null ? null : toInt(row?.teamBPlayer1Id),
+    teamBPlayer2Id: row?.teamBPlayer2Id == null ? null : toInt(row?.teamBPlayer2Id),
     teamAName: row?.teamAName || row?.myTeamName || "팀 A",
     teamBName: row?.teamBName || row?.opponentTeamName || "팀 B",
     scoreA: toInt(row?.scoreA ?? row?.myScore),
@@ -206,6 +210,7 @@ function normalizeTournamentDetail(detail) {
             createdAt: detail.drawPlan.latestRound.createdAt || "",
             assignments: Array.isArray(detail.drawPlan.latestRound.assignments)
               ? detail.drawPlan.latestRound.assignments.map((court) => ({
+                  assignmentId: toInt(court.assignmentId),
                   courtNo: toInt(court.courtNo),
                   matchFormat: court.matchFormat || "SINGLES",
                   teamAPlayer1Id: toInt(court.teamAPlayer1Id),
@@ -217,6 +222,8 @@ function normalizeTournamentDetail(detail) {
                   previousPairCount: toInt(court.previousPairCount),
                   previousTeamAPairCount: toInt(court.previousTeamAPairCount),
                   previousTeamBPairCount: toInt(court.previousTeamBPairCount),
+                  hasResult: Boolean(court.hasResult),
+                  recordedMatchId: toInt(court.recordedMatchId),
                 }))
               : [],
             waiting: Array.isArray(detail.drawPlan.latestRound.waiting)
@@ -477,6 +484,7 @@ const app = createApp({
         matchA2: "",
         matchB1: "",
         matchB2: "",
+        drawAssignmentId: "",
         matchScoreA: 6,
         matchScoreB: 4,
         simType: "REGULAR",
@@ -660,21 +668,108 @@ const app = createApp({
       return rows.filter((player) => normalizeSearch(player.name).includes(query));
     },
 
-    recordMatrixPlayers() {
-      if (!this.recordTournament?.scheduleMatrix) return [];
-      return Object.keys(this.recordTournament.scheduleMatrix);
-    },
+    recordTournamentStatsRows() {
+      const tournament = this.recordTournament;
+      if (!tournament) return [];
 
-    recordMatrixRows() {
-      const names = this.recordMatrixPlayers;
-      if (!names.length) return [];
-      return names.map((rowName) => ({
-        name: rowName,
-        cells: names.map((colName) => ({
-          key: colName,
-          value: this.recordTournament.scheduleMatrix?.[rowName]?.[colName] || "",
-        })),
-      }));
+      const rowsById = new Map();
+      const rowsByName = new Map();
+
+      const upsertRow = (id, name = "") => {
+        const key = toInt(id, 0);
+        if (key > 0) {
+          if (!rowsById.has(key)) {
+            rowsById.set(key, {
+              playerId: key,
+              name: String(name || ""),
+              eloDelta: 0,
+              matches: 0,
+              wins: 0,
+              losses: 0,
+              draws: 0,
+              winRate: 0,
+            });
+          } else if (name && !rowsById.get(key).name) {
+            rowsById.get(key).name = String(name);
+          }
+          const row = rowsById.get(key);
+          if (row.name) rowsByName.set(normalizeSearch(row.name), row);
+          return row;
+        }
+        const normalized = normalizeSearch(name);
+        if (!normalized) return null;
+        if (!rowsByName.has(normalized)) {
+          rowsByName.set(normalized, {
+            playerId: 0,
+            name: String(name || ""),
+            eloDelta: 0,
+            matches: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            winRate: 0,
+          });
+        }
+        return rowsByName.get(normalized);
+      };
+
+      for (const participant of tournament.participants || []) {
+        const row = upsertRow(participant.playerId, participant.name);
+        if (row) row.eloDelta = toInt(participant.pendingDelta);
+      }
+
+      for (const event of tournament.ratingEvents || []) {
+        const row = upsertRow(event.playerId, event.name);
+        if (row) row.eloDelta = toInt(event.delta);
+      }
+
+      const resolveTeamRows = (match, side) => {
+        const sideKey = String(side || "").toUpperCase() === "B" ? "B" : "A";
+        const idKeys =
+          sideKey === "A"
+            ? ["teamAPlayer1Id", "teamAPlayer2Id"]
+            : ["teamBPlayer1Id", "teamBPlayer2Id"];
+        const nameKey = sideKey === "A" ? "teamAName" : "teamBName";
+
+        const rows = idKeys
+          .map((key) => toInt(match?.[key], 0))
+          .filter((id) => id > 0)
+          .map((id) => rowsById.get(id))
+          .filter(Boolean);
+        if (rows.length) return rows;
+
+        const members = String(match?.[nameKey] || "")
+          .split("/")
+          .map((name) => name.trim())
+          .filter(Boolean);
+        return members.map((name) => rowsByName.get(normalizeSearch(name))).filter(Boolean);
+      };
+
+      const applyResult = (rows, result) => {
+        for (const row of rows) {
+          row.matches += 1;
+          if (result === "win") row.wins += 1;
+          else if (result === "loss") row.losses += 1;
+          else row.draws += 1;
+        }
+      };
+
+      for (const match of tournament.matches || []) {
+        const scoreA = toInt(match.scoreA);
+        const scoreB = toInt(match.scoreB);
+        const resultA = scoreA > scoreB ? "win" : scoreA < scoreB ? "loss" : "draw";
+        const resultB = scoreB > scoreA ? "win" : scoreB < scoreA ? "loss" : "draw";
+        applyResult(resolveTeamRows(match, "A"), resultA);
+        applyResult(resolveTeamRows(match, "B"), resultB);
+      }
+
+      const merged = [...new Set([...rowsById.values(), ...rowsByName.values()])];
+      return merged
+        .map((row) => ({
+          ...row,
+          winRate: row.matches > 0 ? Math.round((row.wins / row.matches) * 100) : 0,
+        }))
+        .sort((a, b) => b.eloDelta - a.eloDelta || b.wins - a.wins || b.matches - a.matches || a.name.localeCompare(b.name, "ko"));
     },
 
     histogramRows() {
@@ -1053,12 +1148,21 @@ const app = createApp({
 
     openMatchEntryModal() {
       if (!this.openTournament) return;
+      this.forms.drawAssignmentId = "";
       this.syncMatchSelectDefaults();
       this.modals.matchEntry = true;
     },
 
+    isDrawCourtLocked(court) {
+      return Boolean(court?.hasResult);
+    },
+
     openMatchEntryFromDraw(court) {
       if (!this.openTournament) return;
+      if (this.isDrawCourtLocked(court)) {
+        this.showToast("이미 해당 코트 결과가 입력되었습니다. 새 랜덤 대진표를 생성해 주세요.");
+        return;
+      }
       const matchFormat = String(court?.matchFormat || "SINGLES").toUpperCase() === "DOUBLES" ? "DOUBLES" : "SINGLES";
       const teamAPlayer1Id = toInt(court?.teamAPlayer1Id, 0);
       const teamAPlayer2Id = court?.teamAPlayer2Id == null ? null : toInt(court?.teamAPlayer2Id, 0);
@@ -1079,6 +1183,7 @@ const app = createApp({
       this.forms.matchA2 = matchFormat === "DOUBLES" ? String(teamAPlayer2Id) : "";
       this.forms.matchB1 = String(teamBPlayer1Id);
       this.forms.matchB2 = matchFormat === "DOUBLES" ? String(teamBPlayer2Id) : "";
+      this.forms.drawAssignmentId = toInt(court?.assignmentId, 0) > 0 ? String(toInt(court.assignmentId, 0)) : "";
       this.modals.matchEntry = true;
     },
 
@@ -1158,17 +1263,22 @@ const app = createApp({
         return;
       }
 
-      const summary = this.playerStats.summary;
+      const matches = Array.isArray(this.playerStats?.matches) ? this.playerStats.matches : [];
       const labels = ["전체", "단식", "복식"];
-      const total = toInt(summary.total);
-      const singlesTotal = toInt(summary.singlesTotal);
-      const doublesTotal = toInt(summary.doublesTotal);
-      const matchCounts = [total, singlesTotal, doublesTotal];
-      const winRates = [
-        total > 0 ? toInt(summary.winRate) : null,
-        singlesTotal > 0 ? toInt(summary.singlesWinRate) : null,
-        doublesTotal > 0 ? toInt(summary.doublesWinRate) : null,
-      ];
+      const buckets = {
+        total: { wins: 0, losses: 0, draws: 0 },
+        singles: { wins: 0, losses: 0, draws: 0 },
+        doubles: { wins: 0, losses: 0, draws: 0 },
+      };
+
+      for (const match of matches) {
+        const scoreA = toInt(match?.scoreA);
+        const scoreB = toInt(match?.scoreB);
+        const formatKey = String(match?.matchFormat || "SINGLES").toUpperCase() === "DOUBLES" ? "doubles" : "singles";
+        const resultKey = scoreA > scoreB ? "wins" : scoreA < scoreB ? "losses" : "draws";
+        buckets.total[resultKey] += 1;
+        buckets[formatKey][resultKey] += 1;
+      }
 
       this.destroyPlayerStatsChart();
       this.charts.playerStats = new Chart(canvas, {
@@ -1177,24 +1287,28 @@ const app = createApp({
           labels,
           datasets: [
             {
-              type: "bar",
-              label: "경기 수",
-              data: matchCounts,
-              yAxisID: "y",
+              label: "승리",
+              data: [buckets.total.wins, buckets.singles.wins, buckets.doubles.wins],
               borderRadius: 8,
-              backgroundColor: ["#5f95ff", "#6bc7a0", "#f2b46c"],
+              borderSkipped: false,
+              stack: "result",
+              backgroundColor: "#24b47e",
             },
             {
-              type: "line",
-              label: "승률(%)",
-              data: winRates,
-              yAxisID: "y1",
-              tension: 0.32,
-              borderColor: "#2f3d52",
-              backgroundColor: "rgba(47, 61, 82, 0.18)",
-              pointRadius: 4,
-              pointHoverRadius: 5,
-              fill: false,
+              label: "패배",
+              data: [buckets.total.losses, buckets.singles.losses, buckets.doubles.losses],
+              borderRadius: 8,
+              borderSkipped: false,
+              stack: "result",
+              backgroundColor: "#ef6b6b",
+            },
+            {
+              label: "무승부",
+              data: [buckets.total.draws, buckets.singles.draws, buckets.doubles.draws],
+              borderRadius: 8,
+              borderSkipped: false,
+              stack: "result",
+              backgroundColor: "#7f90a8",
             },
           ],
         },
@@ -1209,19 +1323,13 @@ const app = createApp({
           scales: {
             y: {
               beginAtZero: true,
+              stacked: true,
               title: { display: true, text: "경기 수" },
               ticks: { precision: 0 },
               grid: { color: "rgba(64, 92, 130, 0.16)" },
             },
-            y1: {
-              beginAtZero: true,
-              min: 0,
-              max: 100,
-              position: "right",
-              title: { display: true, text: "승률(%)" },
-              grid: { drawOnChartArea: false },
-            },
             x: {
+              stacked: true,
               grid: { color: "rgba(64, 92, 130, 0.1)" },
             },
           },
@@ -1601,6 +1709,7 @@ const app = createApp({
         teamBPlayer2Id,
         scoreA,
         scoreB,
+        drawAssignmentId: toInt(this.forms.drawAssignmentId, 0) > 0 ? toInt(this.forms.drawAssignmentId, 0) : null,
       };
     },
 
@@ -1612,6 +1721,7 @@ const app = createApp({
           await this.refreshBootstrap();
           this.lastSyncedAt = new Date().toISOString();
         });
+        this.forms.drawAssignmentId = "";
         this.modals.matchEntry = false;
         this.showToast("경기 결과를 기록했습니다.");
       } catch (error) {
@@ -2411,15 +2521,20 @@ const app = createApp({
                       v-for="court in openTournamentDrawAssignments"
                       :key="'draw-court-' + court.courtNo"
                       class="draw-court-card"
+                      :class="{ locked: isDrawCourtLocked(court) }"
                       role="button"
-                      tabindex="0"
+                      :aria-disabled="isDrawCourtLocked(court) ? 'true' : 'false'"
+                      :tabindex="isDrawCourtLocked(court) ? -1 : 0"
                       @click="openMatchEntryFromDraw(court)"
                       @keydown.enter.prevent="openMatchEntryFromDraw(court)"
                       @keydown.space.prevent="openMatchEntryFromDraw(court)"
                     >
                       <div class="draw-court-head">
                         <strong>코트 {{ court.courtNo }}</strong>
-                        <small v-if="court.matchFormat === 'DOUBLES'">
+                        <small v-if="isDrawCourtLocked(court)">
+                          결과 입력 완료
+                        </small>
+                        <small v-else-if="court.matchFormat === 'DOUBLES'">
                           클릭하여 결과 입력 · 팀A 중복 {{ court.previousTeamAPairCount }}회 · 팀B 중복 {{ court.previousTeamBPairCount }}회
                         </small>
                         <small v-else>클릭하여 결과 입력 · 과거 동일 매치 {{ court.previousPairCount }}회</small>
@@ -2522,9 +2637,9 @@ const app = createApp({
 
             <section v-show="activeTab === 'records'" class="panel-group">
               <article class="surface">
-                <header class="surface-head">
-                  <h3>대회 기록</h3>
-                  <div class="inline-form selector-form">
+                <header class="surface-head record-head">
+                  <h3 class="record-title">대회 기록</h3>
+                  <div class="inline-form selector-form record-selector-form">
                     <input v-model.trim="ui.recordQuery" placeholder="대회 검색" />
                     <select v-model="selectedRecordTournamentId">
                       <option v-for="tournament in filteredRecordTournamentOptions" :key="'record-select-' + tournament.id" :value="String(tournament.id)">
@@ -2551,60 +2666,46 @@ const app = createApp({
                 <p v-else class="empty-copy">조회할 대회를 선택하세요.</p>
               </article>
 
-              <div v-if="recordTournament" class="panel-grid two">
-                <article class="surface">
-                  <h3>최종 반영 점수</h3>
-                  <div class="table-shell">
-                    <table class="data-table">
-                      <thead>
-                        <tr><th>선수</th><th>ELO 변동</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="event in recordTournament.ratingEvents" :key="'rating-' + event.playerId">
-                          <td>
-                            <button type="button" class="inline-link table-link" @click="jumpToPlayerById(event.playerId)">
-                              {{ event.name }}
-                            </button>
-                          </td>
-                          <td>
-                            <div class="elo-result-cell">
-                              <span>{{ formatNum(event.eloBefore) }}</span>
-                              <span :class="{ up: event.delta > 0, down: event.delta < 0 }">{{ formatSigned(event.delta) }}</span>
-                              <strong>{{ formatNum(event.eloAfter) }}</strong>
-                            </div>
-                          </td>
-                        </tr>
-                        <tr v-if="!recordTournament.ratingEvents.length">
-                          <td colspan="2" class="empty-row">점수 반영 데이터가 없습니다.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </article>
-
-                <article class="surface">
-                  <h3>단식 스케줄 매트릭스</h3>
-                  <div class="table-shell">
-                    <table class="data-table matrix">
-                      <thead>
-                        <tr>
-                          <th>선수</th>
-                          <th v-for="name in recordMatrixPlayers" :key="'matrix-head-' + name">{{ name }}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="row in recordMatrixRows" :key="'matrix-row-' + row.name">
-                          <th>{{ row.name }}</th>
-                          <td v-for="cell in row.cells" :key="'matrix-cell-' + row.name + '-' + cell.key">{{ cell.value || '-' }}</td>
-                        </tr>
-                        <tr v-if="!recordMatrixRows.length">
-                          <td colspan="99" class="empty-row">단식 매트릭스 데이터가 없습니다.</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </article>
-              </div>
+              <article v-if="recordTournament" class="surface">
+                <h3>대회 통계</h3>
+                <div class="table-shell">
+                  <table class="data-table tournament-stats-table">
+                    <thead>
+                      <tr>
+                        <th>선수</th>
+                        <th class="num-col">ELO 변동</th>
+                        <th class="num-col">경기</th>
+                        <th class="num-col">승리</th>
+                        <th class="num-col">패배</th>
+                        <th class="num-col">무승부</th>
+                        <th class="num-col">승률</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in recordTournamentStatsRows" :key="'record-stat-' + row.playerId + '-' + row.name">
+                        <td>
+                          <button
+                            type="button"
+                            class="inline-link table-link"
+                            @click="row.playerId > 0 ? jumpToPlayerById(row.playerId) : jumpToPlayerByName(row.name)"
+                          >
+                            {{ row.name }}
+                          </button>
+                        </td>
+                        <td class="num-col" :class="{ up: row.eloDelta > 0, down: row.eloDelta < 0 }">{{ formatSigned(row.eloDelta) }}</td>
+                        <td class="num-col">{{ row.matches }}</td>
+                        <td class="num-col">{{ row.wins }}</td>
+                        <td class="num-col">{{ row.losses }}</td>
+                        <td class="num-col">{{ row.draws }}</td>
+                        <td class="num-col">{{ row.winRate }}%</td>
+                      </tr>
+                      <tr v-if="!recordTournamentStatsRows.length">
+                        <td colspan="7" class="empty-row">통계 데이터가 없습니다.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
 
               <article v-if="recordTournament" class="surface">
                 <h3>경기 결과</h3>
@@ -2625,9 +2726,9 @@ const app = createApp({
 
             <section v-show="activeTab === 'player'" class="panel-group">
               <article class="surface">
-                <header class="surface-head">
-                  <h3>선수별 기록</h3>
-                  <div class="inline-form selector-form">
+                <header class="surface-head player-head">
+                  <h3 class="player-title">선수별 기록</h3>
+                  <div class="inline-form selector-form player-selector-form">
                     <input v-model.trim="ui.playerQuery" placeholder="선수 검색" />
                     <select v-model="selectedPlayerId">
                       <option v-for="player in filteredPlayersForSelector" :key="'player-select-' + player.id" :value="String(player.id)">{{ player.name }}</option>
@@ -2660,7 +2761,7 @@ const app = createApp({
                 <div class="chart-wrap">
                   <canvas ref="playerStatsChart"></canvas>
                 </div>
-                <p class="muted">집계 기준: 취소 대회를 제외한 전체 경기(진행 중 대회 포함)</p>
+                <p class="muted">집계 기준: 취소 대회를 제외한 전체 경기(진행 중 대회 포함), 승/패/무 누적 막대</p>
               </article>
 
               <article v-if="playerStats" class="surface">

@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS tournament_draw_assignments (
   player_a2_id INTEGER,
   player_b_id INTEGER NOT NULL,
   player_b2_id INTEGER,
+  recorded_match_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
   FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,

@@ -639,6 +639,7 @@ async function ensureTournamentDrawTables(db) {
       player_a2_id INTEGER,
       player_b_id INTEGER NOT NULL,
       player_b2_id INTEGER,
+      recorded_match_id INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
       FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,
@@ -713,6 +714,7 @@ async function ensureTournamentDrawTables(db) {
   await tryAddColumn("tournament_draw_rounds", "draw_format TEXT NOT NULL DEFAULT 'DOUBLES'");
   await tryAddColumn("tournament_draw_assignments", "player_a2_id INTEGER");
   await tryAddColumn("tournament_draw_assignments", "player_b2_id INTEGER");
+  await tryAddColumn("tournament_draw_assignments", "recorded_match_id INTEGER");
 }
 
 function drawPairIds(playerAId, playerBId) {
@@ -955,6 +957,7 @@ async function getTournamentDrawPlan(db, tournamentId) {
   const assignmentRows = await dbAll(
     db,
     `SELECT
+      a.id AS assignmentId,
       a.court_no AS courtNo,
       a.player_a_id AS playerAId,
       pa1.name AS playerAName,
@@ -963,7 +966,8 @@ async function getTournamentDrawPlan(db, tournamentId) {
       a.player_b_id AS playerBId,
       pb1.name AS playerBName,
       a.player_b2_id AS playerB2Id,
-      pb2.name AS playerB2Name
+      pb2.name AS playerB2Name,
+      a.recorded_match_id AS recordedMatchId
     FROM tournament_draw_assignments a
     JOIN players pa1 ON pa1.id = a.player_a_id
     LEFT JOIN players pa2 ON pa2.id = a.player_a2_id
@@ -1024,6 +1028,7 @@ async function getTournamentDrawPlan(db, tournamentId) {
           const teamAPairCount = playerA2Id == null ? 0 : pairMap.get(drawPairKey(playerAId, playerA2Id)) || 0;
           const teamBPairCount = playerB2Id == null ? 0 : pairMap.get(drawPairKey(playerBId, playerB2Id)) || 0;
           return {
+            assignmentId: Number(row.assignmentId),
             courtNo: Number(row.courtNo),
             matchFormat: "DOUBLES",
             teamAPlayer1Id: playerAId,
@@ -1034,11 +1039,14 @@ async function getTournamentDrawPlan(db, tournamentId) {
             teamBName: teamName(row.playerBName, row.playerB2Name, "DOUBLES"),
             previousTeamAPairCount: Math.max(0, Number(teamAPairCount || 0) - 1),
             previousTeamBPairCount: Math.max(0, Number(teamBPairCount || 0) - 1),
+            hasResult: row.recordedMatchId != null,
+            recordedMatchId: row.recordedMatchId == null ? null : Number(row.recordedMatchId),
           };
         }
 
         const singlePairCount = pairMap.get(drawPairKey(playerAId, playerBId)) || 0;
         return {
+          assignmentId: Number(row.assignmentId),
           courtNo: Number(row.courtNo),
           matchFormat: "SINGLES",
           teamAPlayer1Id: playerAId,
@@ -1048,6 +1056,8 @@ async function getTournamentDrawPlan(db, tournamentId) {
           teamAName: teamName(row.playerAName, null, "SINGLES"),
           teamBName: teamName(row.playerBName, null, "SINGLES"),
           previousPairCount: Math.max(0, Number(singlePairCount || 0) - 1),
+          hasResult: row.recordedMatchId != null,
+          recordedMatchId: row.recordedMatchId == null ? null : Number(row.recordedMatchId),
         };
       }),
       waiting: waitingRows.map((row) => ({
@@ -1375,6 +1385,7 @@ async function addMatch(db, tournamentId, body) {
   const scoreA = parseNonNegativeInt(body.scoreA, "scoreA");
   const scoreB = parseNonNegativeInt(body.scoreB, "scoreB");
   assert(scoreA + scoreB > 0, "scoreA and scoreB cannot both be 0");
+  const drawAssignmentId = body.drawAssignmentId == null || body.drawAssignmentId === "" ? null : parseId(body.drawAssignmentId, "drawAssignmentId");
 
   const teamAPlayer1Id = parseId(body.teamAPlayer1Id, "teamAPlayer1Id");
   const teamBPlayer1Id = parseId(body.teamBPlayer1Id, "teamBPlayer1Id");
@@ -1392,6 +1403,46 @@ async function addMatch(db, tournamentId, body) {
   assert(uniqueIds.size === inMatchIds.length, "A player cannot be repeated in one match");
   for (const playerId of uniqueIds) {
     assert(seedRatings[playerId] != null, `Player ${playerId} is not a participant`);
+  }
+
+  if (drawAssignmentId != null) {
+    await ensureTournamentDrawTables(db);
+    const assignment = await dbFirst(
+      db,
+      `SELECT
+        id,
+        round_id AS roundId,
+        player_a_id AS playerAId,
+        player_a2_id AS playerA2Id,
+        player_b_id AS playerBId,
+        player_b2_id AS playerB2Id,
+        recorded_match_id AS recordedMatchId
+      FROM tournament_draw_assignments
+      WHERE id=? AND tournament_id=?`,
+      drawAssignmentId,
+      tournamentId
+    );
+    assert(assignment, "Draw assignment not found");
+
+    const latestRound = await dbFirst(
+      db,
+      `SELECT id
+       FROM tournament_draw_rounds
+       WHERE tournament_id=?
+       ORDER BY round_no DESC, id DESC
+       LIMIT 1`,
+      tournamentId
+    );
+    assert(latestRound, "No active draw round found");
+    assert(Number(assignment.roundId) === Number(latestRound.id), "This draw assignment is no longer active");
+    assert(assignment.recordedMatchId == null, "This court already has a recorded result. Generate a new draw to continue.");
+
+    const assignmentFormat = assignment.playerA2Id == null && assignment.playerB2Id == null ? "SINGLES" : "DOUBLES";
+    assert(matchFormat === assignmentFormat, "Match format does not match the selected draw court");
+    assert(teamAPlayer1Id === Number(assignment.playerAId), "Team A player1 does not match the selected draw court");
+    assert((teamAPlayer2Id == null ? null : Number(teamAPlayer2Id)) === (assignment.playerA2Id == null ? null : Number(assignment.playerA2Id)), "Team A player2 does not match the selected draw court");
+    assert(teamBPlayer1Id === Number(assignment.playerBId), "Team B player1 does not match the selected draw court");
+    assert((teamBPlayer2Id == null ? null : Number(teamBPlayer2Id)) === (assignment.playerB2Id == null ? null : Number(assignment.playerB2Id)), "Team B player2 does not match the selected draw court");
   }
 
   const delta = calculateMatchDelta(
@@ -1444,6 +1495,18 @@ async function addMatch(db, tournamentId, body) {
   }
   await db.batch(stmts);
 
+  if (drawAssignmentId != null) {
+    await dbRun(
+      db,
+      `UPDATE tournament_draw_assignments
+       SET recorded_match_id=?
+       WHERE id=? AND tournament_id=?`,
+      matchId,
+      drawAssignmentId,
+      tournamentId
+    );
+  }
+
   return await tournamentDetail(db, tournamentId);
 }
 
@@ -1454,6 +1517,16 @@ async function deleteMatch(db, tournamentId, matchId) {
 
   const match = await dbFirst(db, `SELECT id FROM matches WHERE id=? AND tournament_id=? AND status='ACTIVE'`, matchId, tournamentId);
   assert(match, "Match not found");
+
+  await ensureTournamentDrawTables(db);
+  await dbRun(
+    db,
+    `UPDATE tournament_draw_assignments
+     SET recorded_match_id=NULL
+     WHERE tournament_id=? AND recorded_match_id=?`,
+    tournamentId,
+    matchId
+  );
 
   await dbRun(db, `DELETE FROM matches WHERE id=? AND tournament_id=?`, matchId, tournamentId);
   const remain = await dbAll(db, `SELECT id FROM matches WHERE tournament_id=? AND status='ACTIVE' ORDER BY match_order ASC, id ASC`, tournamentId);

@@ -1082,6 +1082,24 @@ select:focus {
   border-color: #2f84ff;
 }
 
+.draw-court-card.locked {
+  cursor: not-allowed;
+  opacity: 0.72;
+  border-style: dashed;
+  pointer-events: none;
+}
+
+.draw-court-card.locked:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--line);
+}
+
+.draw-court-card.locked:focus-visible {
+  box-shadow: none;
+  border-color: var(--line);
+}
+
 .draw-court-head {
   display: flex;
   align-items: center;
@@ -1171,6 +1189,63 @@ select:focus {
 .selector-form select {
   min-width: 280px;
   flex: 2 1 320px;
+}
+
+.record-head {
+  align-items: flex-start;
+}
+
+.record-title {
+  flex: 1 1 420px;
+  min-width: 240px;
+}
+
+.record-selector-form {
+  width: min(560px, 100%);
+  flex: 0 1 560px;
+  justify-content: flex-end;
+}
+
+.record-selector-form input {
+  min-width: 180px;
+  flex: 1 1 220px;
+}
+
+.record-selector-form select {
+  min-width: 190px;
+  max-width: 240px;
+  flex: 0 1 220px;
+}
+
+.player-head {
+  align-items: flex-start;
+}
+
+.player-title {
+  flex: 1 1 420px;
+  min-width: 240px;
+}
+
+.player-selector-form {
+  width: min(560px, 100%);
+  flex: 0 1 560px;
+  justify-content: flex-end;
+}
+
+.player-selector-form input {
+  min-width: 180px;
+  flex: 1 1 220px;
+}
+
+.player-selector-form select {
+  min-width: 190px;
+  max-width: 220px;
+  flex: 0 1 200px;
+}
+
+.tournament-stats-table .num-col {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .rule-grid {
@@ -1831,6 +1906,44 @@ select:focus {
     flex: 1 1 100%;
   }
 
+  .record-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .record-title {
+    min-width: 0;
+  }
+
+  .record-selector-form {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .record-selector-form select {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+
+  .player-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .player-title {
+    min-width: 0;
+  }
+
+  .player-selector-form {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .player-selector-form select {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+
   .chart-wrap {
     height: 260px;
   }
@@ -2212,6 +2325,15 @@ select:focus {
 
   .draw-court-card:hover {
     border-color: #4b6f9d;
+  }
+
+  .draw-court-card.locked {
+    border-color: #3a4f6e;
+    opacity: 0.68;
+  }
+
+  .draw-court-card.locked:hover {
+    border-color: #3a4f6e;
   }
 
   .draw-court-card:focus-visible {
