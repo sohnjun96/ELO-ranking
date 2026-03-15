@@ -1423,6 +1423,29 @@ const app = createApp({
       }
     },
 
+    async submitDrawPlan() {
+      if (!this.openTournament) return;
+      const requestedCourts = toInt(this.forms.drawCourtCount, 0);
+      if (requestedCourts < 1) {
+        this.showToast("코트 개수는 1 이상이어야 합니다.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("랜덤 대진표를 생성하는 중...", async () => {
+          await requestApi(`/api/tournaments/${this.openTournament.id}/draws`, "POST", {
+            courtCount: requestedCourts,
+          });
+          await this.refreshBootstrap();
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.modals.drawPlanner = false;
+        this.showToast("랜덤 대진표를 생성했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "대진표 생성 실패", true);
+      }
+    },
+
     async deleteMatch(matchId) {
       if (!this.openTournament) return;
       if (!window.confirm("이 경기를 삭제할까요?")) return;
@@ -1718,29 +1741,6 @@ const app = createApp({
     activeTab(newValue) {
       if (newValue === "player") {
         this.schedulePlayerChartsRender();
-      }
-    },
-
-    async submitDrawPlan() {
-      if (!this.openTournament) return;
-      const requestedCourts = toInt(this.forms.drawCourtCount, 0);
-      if (requestedCourts < 1) {
-        this.showToast("코트 개수는 1 이상이어야 합니다.", true);
-        return;
-      }
-
-      try {
-        await this.withLoading("랜덤 대진표를 생성하는 중...", async () => {
-          await requestApi(`/api/tournaments/${this.openTournament.id}/draws`, "POST", {
-            courtCount: requestedCourts,
-          });
-          await this.refreshBootstrap();
-          this.lastSyncedAt = new Date().toISOString();
-        });
-        this.modals.drawPlanner = false;
-        this.showToast("랜덤 대진표를 생성했습니다.");
-      } catch (error) {
-        this.showToast(error instanceof Error ? error.message : "대진표 생성 실패", true);
       }
     },
 
