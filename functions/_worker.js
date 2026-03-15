@@ -426,6 +426,327 @@ async function getTournamentParticipants(db, tournamentId) {
   );
 }
 
+async function ensureTournamentDrawTables(db) {
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS tournament_draw_rounds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tournament_id INTEGER NOT NULL,
+      round_no INTEGER NOT NULL CHECK (round_no >= 1),
+      court_count INTEGER NOT NULL CHECK (court_count >= 1),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+      UNIQUE (tournament_id, round_no)
+    )`
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS tournament_draw_assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tournament_id INTEGER NOT NULL,
+      round_id INTEGER NOT NULL,
+      court_no INTEGER NOT NULL CHECK (court_no >= 1),
+      player_a_id INTEGER NOT NULL,
+      player_b_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+      FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,
+      FOREIGN KEY (player_a_id) REFERENCES players(id),
+      FOREIGN KEY (player_b_id) REFERENCES players(id),
+      CHECK (player_a_id <> player_b_id),
+      UNIQUE (round_id, court_no)
+    )`
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS tournament_draw_waiting (
+      round_id INTEGER NOT NULL,
+      tournament_id INTEGER NOT NULL,
+      player_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (round_id, player_id),
+      FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+      FOREIGN KEY (player_id) REFERENCES players(id)
+    )`
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS tournament_draw_player_state (
+      tournament_id INTEGER NOT NULL,
+      player_id INTEGER NOT NULL,
+      carry_over INTEGER NOT NULL DEFAULT 0 CHECK (carry_over >= 0),
+      assigned_count INTEGER NOT NULL DEFAULT 0 CHECK (assigned_count >= 0),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (tournament_id, player_id),
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+      FOREIGN KEY (player_id) REFERENCES players(id)
+    )`
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS tournament_draw_pair_stats (
+      tournament_id INTEGER NOT NULL,
+      player_low_id INTEGER NOT NULL,
+      player_high_id INTEGER NOT NULL,
+      pair_count INTEGER NOT NULL DEFAULT 0 CHECK (pair_count >= 0),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (tournament_id, player_low_id, player_high_id),
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+      FOREIGN KEY (player_low_id) REFERENCES players(id),
+      FOREIGN KEY (player_high_id) REFERENCES players(id),
+      CHECK (player_low_id < player_high_id)
+    )`
+  );
+}
+
+function drawPairIds(playerAId, playerBId) {
+  const low = Math.min(Number(playerAId), Number(playerBId));
+  const high = Math.max(Number(playerAId), Number(playerBId));
+  return { low, high };
+}
+
+function drawPairKey(playerAId, playerBId) {
+  const { low, high } = drawPairIds(playerAId, playerBId);
+  return `${low}:${high}`;
+}
+
+function shuffleArray(values) {
+  const arr = [...values];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function syncTournamentDrawState(db, tournamentId, participantIds) {
+  await ensureTournamentDrawTables(db);
+  if (!participantIds.length) {
+    await dbRun(db, `DELETE FROM tournament_draw_player_state WHERE tournament_id=?`, tournamentId);
+    await dbRun(db, `DELETE FROM tournament_draw_pair_stats WHERE tournament_id=?`, tournamentId);
+    return;
+  }
+
+  const placeholders = participantIds.map(() => "?").join(",");
+  await dbRun(
+    db,
+    `DELETE FROM tournament_draw_player_state
+    WHERE tournament_id=?
+      AND player_id NOT IN (${placeholders})`,
+    tournamentId,
+    ...participantIds
+  );
+
+  await dbRun(
+    db,
+    `DELETE FROM tournament_draw_pair_stats
+    WHERE tournament_id=?
+      AND (player_low_id NOT IN (${placeholders}) OR player_high_id NOT IN (${placeholders}))`,
+    tournamentId,
+    ...participantIds,
+    ...participantIds
+  );
+
+  const statements = participantIds.map((playerId) =>
+    db.prepare(
+      `INSERT OR IGNORE INTO tournament_draw_player_state (tournament_id, player_id, carry_over, assigned_count, updated_at)
+      VALUES (?, ?, 0, 0, datetime('now'))`
+    ).bind(tournamentId, playerId)
+  );
+  if (statements.length) {
+    await db.batch(statements);
+  }
+}
+
+async function getTournamentDrawStateMap(db, tournamentId, participantIds) {
+  await ensureTournamentDrawTables(db);
+  if (!participantIds.length) return new Map();
+
+  const placeholders = participantIds.map(() => "?").join(",");
+  const rows = await dbAll(
+    db,
+    `SELECT player_id AS playerId, carry_over AS carryOver, assigned_count AS assignedCount
+    FROM tournament_draw_player_state
+    WHERE tournament_id=? AND player_id IN (${placeholders})`,
+    tournamentId,
+    ...participantIds
+  );
+
+  const map = new Map();
+  for (const row of rows) {
+    map.set(Number(row.playerId), {
+      carryOver: Number(row.carryOver || 0),
+      assignedCount: Number(row.assignedCount || 0),
+    });
+  }
+  for (const playerId of participantIds) {
+    if (!map.has(Number(playerId))) {
+      map.set(Number(playerId), { carryOver: 0, assignedCount: 0 });
+    }
+  }
+  return map;
+}
+
+async function getTournamentDrawPairMap(db, tournamentId) {
+  await ensureTournamentDrawTables(db);
+  const rows = await dbAll(
+    db,
+    `SELECT player_low_id AS playerLowId, player_high_id AS playerHighId, pair_count AS pairCount
+    FROM tournament_draw_pair_stats
+    WHERE tournament_id=?`,
+    tournamentId
+  );
+
+  const map = new Map();
+  for (const row of rows) {
+    map.set(`${Number(row.playerLowId)}:${Number(row.playerHighId)}`, Number(row.pairCount || 0));
+  }
+  return map;
+}
+
+function buildDrawPairs(selectedPlayerIds, pairMap, stateMap) {
+  if (selectedPlayerIds.length < 2) return [];
+  const attempts = Math.max(28, selectedPlayerIds.length * 8);
+  let bestPairs = [];
+  let bestRepeated = Number.POSITIVE_INFINITY;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const remaining = shuffleArray(selectedPlayerIds);
+    const pairs = [];
+
+    while (remaining.length > 1) {
+      const playerAId = remaining.shift();
+      let pickIndex = 0;
+      let bestWeight = Number.POSITIVE_INFINITY;
+
+      for (let i = 0; i < remaining.length; i += 1) {
+        const playerBId = remaining[i];
+        const pairCount = pairMap.get(drawPairKey(playerAId, playerBId)) || 0;
+        const state = stateMap.get(playerBId) || { carryOver: 0, assignedCount: 0 };
+        const weight = pairCount * 10000 + state.assignedCount * 8 - state.carryOver * 16 + Math.random();
+        if (weight < bestWeight) {
+          bestWeight = weight;
+          pickIndex = i;
+        }
+      }
+
+      const [playerBId] = remaining.splice(pickIndex, 1);
+      pairs.push([playerAId, playerBId]);
+    }
+
+    let repeatedCount = 0;
+    let score = 0;
+    for (const [playerAId, playerBId] of pairs) {
+      const pairCount = pairMap.get(drawPairKey(playerAId, playerBId)) || 0;
+      if (pairCount > 0) repeatedCount += 1;
+      score += pairCount;
+    }
+
+    if (repeatedCount < bestRepeated || (repeatedCount === bestRepeated && score < bestScore)) {
+      bestPairs = pairs;
+      bestRepeated = repeatedCount;
+      bestScore = score;
+    }
+  }
+
+  return bestPairs;
+}
+
+async function getTournamentDrawPlan(db, tournamentId) {
+  await ensureTournamentDrawTables(db);
+  const latestRound = await dbFirst(
+    db,
+    `SELECT id, round_no AS roundNo, court_count AS courtCount, created_at AS createdAt
+    FROM tournament_draw_rounds
+    WHERE tournament_id=?
+    ORDER BY round_no DESC, id DESC
+    LIMIT 1`,
+    tournamentId
+  );
+
+  if (!latestRound) {
+    return {
+      totalRounds: 0,
+      latestRound: null,
+    };
+  }
+
+  const assignmentRows = await dbAll(
+    db,
+    `SELECT
+      a.court_no AS courtNo,
+      a.player_a_id AS playerAId,
+      pa.name AS playerAName,
+      a.player_b_id AS playerBId,
+      pb.name AS playerBName,
+      COALESCE(ps.pair_count, 0) AS pairCount
+    FROM tournament_draw_assignments a
+    JOIN players pa ON pa.id = a.player_a_id
+    JOIN players pb ON pb.id = a.player_b_id
+    LEFT JOIN tournament_draw_pair_stats ps
+      ON ps.tournament_id = a.tournament_id
+      AND ps.player_low_id = CASE WHEN a.player_a_id < a.player_b_id THEN a.player_a_id ELSE a.player_b_id END
+      AND ps.player_high_id = CASE WHEN a.player_a_id < a.player_b_id THEN a.player_b_id ELSE a.player_a_id END
+    WHERE a.round_id=?
+    ORDER BY a.court_no ASC`,
+    Number(latestRound.id)
+  );
+
+  const waitingRows = await dbAll(
+    db,
+    `SELECT w.player_id AS playerId, p.name
+    FROM tournament_draw_waiting w
+    JOIN players p ON p.id = w.player_id
+    WHERE w.round_id=?
+    ORDER BY p.name ASC`,
+    Number(latestRound.id)
+  );
+
+  const waitingIds = waitingRows.map((row) => Number(row.playerId));
+  let waitingCarryMap = new Map();
+  if (waitingIds.length) {
+    const placeholders = waitingIds.map(() => "?").join(",");
+    const stateRows = await dbAll(
+      db,
+      `SELECT player_id AS playerId, carry_over AS carryOver
+      FROM tournament_draw_player_state
+      WHERE tournament_id=? AND player_id IN (${placeholders})`,
+      tournamentId,
+      ...waitingIds
+    );
+    waitingCarryMap = new Map(stateRows.map((row) => [Number(row.playerId), Number(row.carryOver || 0)]));
+  }
+
+  return {
+    totalRounds: Number(latestRound.roundNo || 0),
+    latestRound: {
+      roundId: Number(latestRound.id),
+      roundNo: Number(latestRound.roundNo),
+      courtCount: Number(latestRound.courtCount),
+      createdAt: latestRound.createdAt,
+      assignments: assignmentRows.map((row) => ({
+        courtNo: Number(row.courtNo),
+        playerAId: Number(row.playerAId),
+        playerAName: row.playerAName,
+        playerBId: Number(row.playerBId),
+        playerBName: row.playerBName,
+        previousPairCount: Math.max(0, Number(row.pairCount || 0) - 1),
+      })),
+      waiting: waitingRows.map((row) => ({
+        playerId: Number(row.playerId),
+        name: row.name,
+        carryOver: waitingCarryMap.get(Number(row.playerId)) || 0,
+      })),
+    },
+  };
+}
+
 async function getPendingDeltaMap(db, tournamentId) {
   const rows = await dbAll(
     db,
@@ -540,6 +861,7 @@ async function tournamentDetail(db, tournamentId) {
     delta: Number(row.delta),
     eloAfter: Number(row.eloAfter),
   }));
+  const drawPlan = await getTournamentDrawPlan(db, tournamentId);
 
   return {
     id: Number(tournament.id),
@@ -557,6 +879,7 @@ async function tournamentDetail(db, tournamentId) {
     matchCount: matches.length,
     scheduleMatrix: singlesMatrix(participants, matches),
     ratingEvents,
+    drawPlan,
   };
 }
 
@@ -824,6 +1147,133 @@ async function deleteMatch(db, tournamentId, matchId) {
   const remain = await dbAll(db, `SELECT id FROM matches WHERE tournament_id=? AND status='ACTIVE' ORDER BY match_order ASC, id ASC`, tournamentId);
   if (remain.length) {
     await db.batch(remain.map((row, index) => db.prepare(`UPDATE matches SET match_order=? WHERE id=?`).bind(index + 1, Number(row.id))));
+  }
+
+  return await tournamentDetail(db, tournamentId);
+}
+
+async function generateTournamentDraw(db, tournamentId, body) {
+  await ensureTournamentDrawTables(db);
+  const tournament = await getTournamentRow(db, tournamentId);
+  assert(tournament, "Tournament not found");
+  assert(tournament.status === "OPEN", "Only OPEN tournaments can generate draws");
+
+  const courtCount = parseNonNegativeInt(body?.courtCount, "courtCount");
+  assert(courtCount >= 1, "courtCount must be at least 1");
+
+  const participants = await getTournamentParticipants(db, tournamentId);
+  const participantIds = participants.map((row) => Number(row.playerId));
+  assert(participantIds.length >= 2, "At least 2 participants are required");
+
+  await syncTournamentDrawState(db, tournamentId, participantIds);
+  const stateMap = await getTournamentDrawStateMap(db, tournamentId, participantIds);
+  const pairMap = await getTournamentDrawPairMap(db, tournamentId);
+
+  const ranked = participants
+    .map((row) => {
+      const playerId = Number(row.playerId);
+      const state = stateMap.get(playerId) || { carryOver: 0, assignedCount: 0 };
+      return {
+        playerId,
+        seedRank: Number(row.seedRank || 999999),
+        carryOver: Number(state.carryOver || 0),
+        assignedCount: Number(state.assignedCount || 0),
+        randomTie: Math.random(),
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.carryOver - a.carryOver ||
+        a.assignedCount - b.assignedCount ||
+        a.seedRank - b.seedRank ||
+        a.randomTie - b.randomTie
+    );
+
+  const usableCourts = Math.min(courtCount, Math.floor(ranked.length / 2));
+  assert(usableCourts >= 1, "Not enough participants for this court count");
+
+  const slots = usableCourts * 2;
+  const selectedPlayerIds = ranked.slice(0, slots).map((row) => row.playerId);
+  const waitingPlayerIds = ranked.slice(slots).map((row) => row.playerId);
+  const pairs = buildDrawPairs(selectedPlayerIds, pairMap, stateMap);
+  assert(pairs.length === usableCourts, "Failed to generate pairings");
+
+  const roundRow = await dbFirst(
+    db,
+    `SELECT COALESCE(MAX(round_no), 0) AS maxRound
+    FROM tournament_draw_rounds
+    WHERE tournament_id=?`,
+    tournamentId
+  );
+  const nextRoundNo = Number(roundRow?.maxRound || 0) + 1;
+
+  const insertedRound = await dbRun(
+    db,
+    `INSERT INTO tournament_draw_rounds (tournament_id, round_no, court_count, created_at)
+    VALUES (?, ?, ?, datetime('now'))`,
+    tournamentId,
+    nextRoundNo,
+    usableCourts
+  );
+  const roundId = Number(insertedRound.meta?.last_row_id);
+  assert(roundId > 0, "Failed to create draw round");
+
+  const statements = [];
+  for (let index = 0; index < pairs.length; index += 1) {
+    const [playerAId, playerBId] = pairs[index];
+    const courtNo = index + 1;
+    const { low, high } = drawPairIds(playerAId, playerBId);
+
+    statements.push(
+      db.prepare(
+        `INSERT INTO tournament_draw_assignments (
+          tournament_id, round_id, court_no, player_a_id, player_b_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(tournamentId, roundId, courtNo, playerAId, playerBId)
+    );
+    statements.push(
+      db.prepare(
+        `UPDATE tournament_draw_player_state
+        SET carry_over=0, assigned_count=assigned_count+1, updated_at=datetime('now')
+        WHERE tournament_id=? AND player_id=?`
+      ).bind(tournamentId, playerAId)
+    );
+    statements.push(
+      db.prepare(
+        `UPDATE tournament_draw_player_state
+        SET carry_over=0, assigned_count=assigned_count+1, updated_at=datetime('now')
+        WHERE tournament_id=? AND player_id=?`
+      ).bind(tournamentId, playerBId)
+    );
+    statements.push(
+      db.prepare(
+        `INSERT INTO tournament_draw_pair_stats (
+          tournament_id, player_low_id, player_high_id, pair_count, updated_at
+        ) VALUES (?, ?, ?, 1, datetime('now'))
+        ON CONFLICT(tournament_id, player_low_id, player_high_id)
+        DO UPDATE SET pair_count = pair_count + 1, updated_at=datetime('now')`
+      ).bind(tournamentId, low, high)
+    );
+  }
+
+  for (const playerId of waitingPlayerIds) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO tournament_draw_waiting (round_id, tournament_id, player_id, created_at)
+        VALUES (?, ?, ?, datetime('now'))`
+      ).bind(roundId, tournamentId, playerId)
+    );
+    statements.push(
+      db.prepare(
+        `UPDATE tournament_draw_player_state
+        SET carry_over=carry_over+1, updated_at=datetime('now')
+        WHERE tournament_id=? AND player_id=?`
+      ).bind(tournamentId, playerId)
+    );
+  }
+
+  if (statements.length) {
+    await db.batch(statements);
   }
 
   return await tournamentDetail(db, tournamentId);
@@ -1307,6 +1757,12 @@ async function route(request, env) {
       if (request.method !== "DELETE") return methodNotAllowed();
       const matchId = parseId(segments[3], "matchId");
       return json({ ok: true, tournament: await deleteMatch(env.DB, tournamentId, matchId) });
+    }
+
+    if (segments.length === 3 && segments[2] === "draws") {
+      if (request.method !== "POST") return methodNotAllowed();
+      const body = await readJson(request);
+      return json({ ok: true, tournament: await generateTournamentDraw(env.DB, tournamentId, body) });
     }
 
     if (segments.length === 3 && segments[2] === "finalize") {

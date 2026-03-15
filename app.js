@@ -168,6 +168,34 @@ function normalizeTournamentDetail(detail) {
         }))
       : [],
     scheduleMatrix: detail.scheduleMatrix && typeof detail.scheduleMatrix === "object" ? detail.scheduleMatrix : {},
+    drawPlan: {
+      totalRounds: toInt(detail.drawPlan?.totalRounds),
+      latestRound: detail.drawPlan?.latestRound
+        ? {
+            roundId: toInt(detail.drawPlan.latestRound.roundId),
+            roundNo: toInt(detail.drawPlan.latestRound.roundNo),
+            courtCount: toInt(detail.drawPlan.latestRound.courtCount),
+            createdAt: detail.drawPlan.latestRound.createdAt || "",
+            assignments: Array.isArray(detail.drawPlan.latestRound.assignments)
+              ? detail.drawPlan.latestRound.assignments.map((court) => ({
+                  courtNo: toInt(court.courtNo),
+                  playerAId: toInt(court.playerAId),
+                  playerAName: court.playerAName || "",
+                  playerBId: toInt(court.playerBId),
+                  playerBName: court.playerBName || "",
+                  previousPairCount: toInt(court.previousPairCount),
+                }))
+              : [],
+            waiting: Array.isArray(detail.drawPlan.latestRound.waiting)
+              ? detail.drawPlan.latestRound.waiting.map((player) => ({
+                  playerId: toInt(player.playerId),
+                  name: player.name || "",
+                  carryOver: toInt(player.carryOver),
+                }))
+              : [],
+          }
+        : null,
+    },
   };
 }
 
@@ -420,6 +448,7 @@ const app = createApp({
         tournamentEditName: "",
         tournamentEditDate: "",
         tournamentEditType: "REGULAR",
+        drawCourtCount: 2,
       },
 
       modals: {
@@ -427,6 +456,7 @@ const app = createApp({
         tournamentSettings: false,
         playerMatches: false,
         eloSimulator: false,
+        drawPlanner: false,
       },
 
       charts: {
@@ -518,6 +548,26 @@ const app = createApp({
 
     openTournamentMatches() {
       return (this.openTournament?.matches || []).slice().sort((a, b) => a.matchOrder - b.matchOrder || a.matchId - b.matchId);
+    },
+
+    openTournamentDrawPlan() {
+      return this.openTournament?.drawPlan || { totalRounds: 0, latestRound: null };
+    },
+
+    openTournamentDrawLatest() {
+      return this.openTournamentDrawPlan.latestRound || null;
+    },
+
+    openTournamentDrawAssignments() {
+      return (this.openTournamentDrawLatest?.assignments || []).slice().sort((a, b) => a.courtNo - b.courtNo);
+    },
+
+    openTournamentDrawWaiting() {
+      return (this.openTournamentDrawLatest?.waiting || []).slice().sort((a, b) => b.carryOver - a.carryOver || a.name.localeCompare(b.name, "ko"));
+    },
+
+    maxDrawableCourts() {
+      return Math.max(1, Math.floor(this.openTournamentParticipants.length / 2));
     },
 
     recordTournamentOptions() {
@@ -856,6 +906,18 @@ const app = createApp({
 
     closeMatchEntryModal() {
       this.modals.matchEntry = false;
+    },
+
+    openDrawPlannerModal() {
+      if (!this.openTournament) return;
+      const latestCourts = toInt(this.openTournamentDrawLatest?.courtCount, 0);
+      const recommended = latestCourts > 0 ? latestCourts : Math.min(2, this.maxDrawableCourts);
+      this.forms.drawCourtCount = Math.max(1, Math.min(this.maxDrawableCourts, recommended));
+      this.modals.drawPlanner = true;
+    },
+
+    closeDrawPlannerModal() {
+      this.modals.drawPlanner = false;
     },
 
     openTournamentSettingsModal() {
@@ -1609,6 +1671,7 @@ const app = createApp({
         if (!this.openTournament) {
           this.modals.matchEntry = false;
           this.modals.tournamentSettings = false;
+          this.modals.drawPlanner = false;
         }
       },
       deep: false,
@@ -1655,6 +1718,29 @@ const app = createApp({
     activeTab(newValue) {
       if (newValue === "player") {
         this.schedulePlayerChartsRender();
+      }
+    },
+
+    async submitDrawPlan() {
+      if (!this.openTournament) return;
+      const requestedCourts = toInt(this.forms.drawCourtCount, 0);
+      if (requestedCourts < 1) {
+        this.showToast("코트 개수는 1 이상이어야 합니다.", true);
+        return;
+      }
+
+      try {
+        await this.withLoading("랜덤 대진표를 생성하는 중...", async () => {
+          await requestApi(`/api/tournaments/${this.openTournament.id}/draws`, "POST", {
+            courtCount: requestedCourts,
+          });
+          await this.refreshBootstrap();
+          this.lastSyncedAt = new Date().toISOString();
+        });
+        this.modals.drawPlanner = false;
+        this.showToast("랜덤 대진표를 생성했습니다.");
+      } catch (error) {
+        this.showToast(error instanceof Error ? error.message : "대진표 생성 실패", true);
       }
     },
 
@@ -1734,12 +1820,10 @@ const app = createApp({
               <p>선수 등록부터 대회 종료 반영까지 한 흐름으로 관리합니다.</p>
             </div>
             <div class="head-actions">
-              <button type="button" class="btn ghost mini nav-toggle-btn" @click="toggleSidebar">
-                {{ isSidebarOpen ? "메뉴 숨기기" : "메뉴 보기" }}
+              <button type="button" class="menu-toggle-btn" @click="toggleSidebar" :aria-expanded="isSidebarOpen ? 'true' : 'false'">
+                <span class="menu-toggle-icon" aria-hidden="true"></span>
+                <span>{{ isSidebarOpen ? "메뉴 패널 접기" : "메뉴 패널 보기" }}</span>
               </button>
-              <button type="button" class="btn ghost" @click="refreshAll('전체 데이터를 동기화하는 중...')">전체 동기화</button>
-              <div class="sync-text">마지막 동기화: {{ formatDateTime(lastSyncedAt, true) }}</div>
-              <div class="health-pill" :class="{ ok: health.ok === true, bad: health.ok === false }">{{ health.text }}</div>
             </div>
           </header>
 
@@ -1898,9 +1982,44 @@ const app = createApp({
 
               <template v-else>
                 <div class="tournament-toolbar">
+                  <button type="button" class="btn ghost" @click="openDrawPlannerModal">랜덤 대진표 생성</button>
                   <button type="button" class="btn ghost" @click="openTournamentSettingsModal">대회 설정 변경</button>
                   <button type="button" class="btn primary" @click="openMatchEntryModal">경기 결과 입력</button>
                 </div>
+
+                <article class="surface">
+                  <header class="surface-head">
+                    <h3>랜덤 대진표</h3>
+                    <p v-if="openTournamentDrawLatest" class="muted">
+                      {{ openTournamentDrawLatest.roundNo }}회차 · 코트 {{ openTournamentDrawLatest.courtCount }}개 · {{ openTournamentDrawLatest.createdAt }}
+                    </p>
+                  </header>
+
+                  <div v-if="openTournamentDrawLatest" class="draw-court-grid">
+                    <article v-for="court in openTournamentDrawAssignments" :key="'draw-court-' + court.courtNo" class="draw-court-card">
+                      <div class="draw-court-head">
+                        <strong>코트 {{ court.courtNo }}</strong>
+                        <small>과거 동일 매치 {{ court.previousPairCount }}회</small>
+                      </div>
+                      <div class="draw-vs-line">
+                        <span>{{ court.playerAName }}</span>
+                        <em>VS</em>
+                        <span>{{ court.playerBName }}</span>
+                      </div>
+                    </article>
+                  </div>
+
+                  <p v-else class="empty-copy">아직 생성된 대진표가 없습니다. 상단 버튼으로 첫 배치를 생성하세요.</p>
+
+                  <div v-if="openTournamentDrawWaiting.length" class="draw-waiting">
+                    <strong>이번 라운드 대기 (다음 배치 우선)</strong>
+                    <div class="draw-waiting-chip-wrap">
+                      <span v-for="player in openTournamentDrawWaiting" :key="'draw-wait-' + player.playerId" class="draw-waiting-chip">
+                        {{ player.name }} · 대기 {{ player.carryOver }}
+                      </span>
+                    </div>
+                  </div>
+                </article>
 
                 <article class="surface">
                   <h3>진행 중 대회</h3>
@@ -2474,6 +2593,36 @@ const app = createApp({
             <div class="modal-actions">
               <button type="button" class="btn ghost" @click="closeTournamentSettingsModal">취소</button>
               <button type="submit" class="btn primary">저장</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div
+        v-if="modals.drawPlanner && openTournament"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeDrawPlannerModal"
+      >
+        <div class="modal-card">
+          <header class="modal-head">
+            <h3>랜덤 대진표 생성</h3>
+            <button type="button" class="modal-close" @click="closeDrawPlannerModal">닫기</button>
+          </header>
+
+          <form class="stack-form modal-body" @submit.prevent="submitDrawPlan">
+            <p class="muted">
+              코트 수는 라운드마다 바꿀 수 있습니다. 이번 라운드에서 대기한 선수는 다음 생성 때 우선 배치됩니다.
+            </p>
+            <label>코트 개수
+              <input v-model.number="forms.drawCourtCount" type="number" min="1" :max="maxDrawableCourts" required />
+            </label>
+            <p class="muted">현재 참가자 {{ openTournamentParticipants.length }}명 기준 최대 {{ maxDrawableCourts }}코트</p>
+
+            <div class="modal-actions">
+              <button type="button" class="btn ghost" @click="closeDrawPlannerModal">취소</button>
+              <button type="submit" class="btn primary">생성</button>
             </div>
           </form>
         </div>

@@ -108,6 +108,67 @@ CREATE TABLE IF NOT EXISTS rating_events (
   CHECK (elo_before + delta = elo_after)
 );
 
+CREATE TABLE IF NOT EXISTS tournament_draw_rounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tournament_id INTEGER NOT NULL,
+  round_no INTEGER NOT NULL CHECK (round_no >= 1),
+  court_count INTEGER NOT NULL CHECK (court_count >= 1),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+  UNIQUE (tournament_id, round_no)
+);
+
+CREATE TABLE IF NOT EXISTS tournament_draw_assignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tournament_id INTEGER NOT NULL,
+  round_id INTEGER NOT NULL,
+  court_no INTEGER NOT NULL CHECK (court_no >= 1),
+  player_a_id INTEGER NOT NULL,
+  player_b_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+  FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,
+  FOREIGN KEY (player_a_id) REFERENCES players(id),
+  FOREIGN KEY (player_b_id) REFERENCES players(id),
+  CHECK (player_a_id <> player_b_id),
+  UNIQUE (round_id, court_no)
+);
+
+CREATE TABLE IF NOT EXISTS tournament_draw_waiting (
+  round_id INTEGER NOT NULL,
+  tournament_id INTEGER NOT NULL,
+  player_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (round_id, player_id),
+  FOREIGN KEY (round_id) REFERENCES tournament_draw_rounds(id) ON DELETE CASCADE,
+  FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+  FOREIGN KEY (player_id) REFERENCES players(id)
+);
+
+CREATE TABLE IF NOT EXISTS tournament_draw_player_state (
+  tournament_id INTEGER NOT NULL,
+  player_id INTEGER NOT NULL,
+  carry_over INTEGER NOT NULL DEFAULT 0 CHECK (carry_over >= 0),
+  assigned_count INTEGER NOT NULL DEFAULT 0 CHECK (assigned_count >= 0),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tournament_id, player_id),
+  FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+  FOREIGN KEY (player_id) REFERENCES players(id)
+);
+
+CREATE TABLE IF NOT EXISTS tournament_draw_pair_stats (
+  tournament_id INTEGER NOT NULL,
+  player_low_id INTEGER NOT NULL,
+  player_high_id INTEGER NOT NULL,
+  pair_count INTEGER NOT NULL DEFAULT 0 CHECK (pair_count >= 0),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (tournament_id, player_low_id, player_high_id),
+  FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+  FOREIGN KEY (player_low_id) REFERENCES players(id),
+  FOREIGN KEY (player_high_id) REFERENCES players(id),
+  CHECK (player_low_id < player_high_id)
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_open_tournament
 ON tournaments(status)
 WHERE status = 'OPEN';
@@ -140,6 +201,24 @@ ON rating_events(player_id, event_date, id);
 
 CREATE INDEX IF NOT EXISTS idx_rating_events_tournament
 ON rating_events(tournament_id, player_id);
+
+CREATE INDEX IF NOT EXISTS idx_draw_rounds_tournament
+ON tournament_draw_rounds(tournament_id, round_no DESC);
+
+CREATE INDEX IF NOT EXISTS idx_draw_assignments_round
+ON tournament_draw_assignments(round_id, court_no);
+
+CREATE INDEX IF NOT EXISTS idx_draw_assignments_tournament
+ON tournament_draw_assignments(tournament_id, round_id);
+
+CREATE INDEX IF NOT EXISTS idx_draw_waiting_round
+ON tournament_draw_waiting(round_id, player_id);
+
+CREATE INDEX IF NOT EXISTS idx_draw_state_tournament
+ON tournament_draw_player_state(tournament_id, carry_over DESC, assigned_count ASC);
+
+CREATE INDEX IF NOT EXISTS idx_draw_pair_stats_tournament
+ON tournament_draw_pair_stats(tournament_id, pair_count DESC);
 
 CREATE VIEW IF NOT EXISTS v_current_rankings AS
 SELECT

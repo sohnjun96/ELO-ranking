@@ -267,19 +267,19 @@ button {
   gap: 14px;
 }
 
-.nav-toggle-btn {
-  min-width: 96px;
-}
-
 .mobile-backdrop {
   display: none;
 }
 
 .workspace-head {
+  position: sticky;
+  top: 12px;
+  z-index: 30;
   border: 1px solid var(--line);
   border-radius: var(--radius-xl);
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.95), rgba(239, 246, 255, 0.88));
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.97), rgba(239, 246, 255, 0.94));
   box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
   padding: 18px;
   display: flex;
   justify-content: space-between;
@@ -301,36 +301,55 @@ button {
 .head-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 0;
   justify-content: flex-end;
 }
 
-.sync-text {
-  font-size: 12px;
-  color: var(--ink-muted);
-  min-width: 180px;
+.menu-toggle-btn {
+  border: 1px solid #2f67d4;
+  border-radius: 12px;
+  background: linear-gradient(140deg, #2b6ce8, #2f84ff);
+  color: #f8fbff;
+  min-height: 46px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  box-shadow: 0 16px 30px -18px rgba(43, 108, 232, 0.78);
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.2s ease, filter 0.2s ease;
 }
 
-.health-pill {
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  background: #fff;
-  padding: 7px 12px;
-  font-size: 12px;
-  font-weight: 700;
+.menu-toggle-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 20px 34px -18px rgba(43, 108, 232, 0.82);
+  filter: brightness(1.04);
 }
 
-.health-pill.ok {
-  color: #146e49;
-  border-color: #8bd6b4;
-  background: #e8fcf3;
+.menu-toggle-btn:active {
+  transform: translateY(0);
 }
 
-.health-pill.bad {
-  color: #b12f46;
-  border-color: #f3aab8;
-  background: #fff1f4;
+.menu-toggle-icon {
+  width: 17px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-top: 2px solid rgba(248, 251, 255, 0.96);
+  border-bottom: 2px solid rgba(248, 251, 255, 0.96);
+  position: relative;
+}
+
+.menu-toggle-icon::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 2px solid rgba(248, 251, 255, 0.96);
+  transform: translateY(-50%);
 }
 
 .kpi-grid {
@@ -925,7 +944,7 @@ select:focus {
 
 .tournament-toolbar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
   gap: 10px;
   align-items: stretch;
 }
@@ -937,6 +956,94 @@ select:focus {
 
 .tournament-end-actions {
   margin-top: 2px;
+}
+
+.draw-court-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.draw-court-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: linear-gradient(160deg, #ffffff, #f4f8ff);
+  padding: 10px 11px;
+  display: grid;
+  gap: 9px;
+}
+
+.draw-court-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.draw-court-head strong {
+  font-size: 15px;
+}
+
+.draw-court-head small {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.draw-vs-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.draw-vs-line span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  font-weight: 700;
+  color: var(--ink);
+  padding: 0 10px;
+  text-align: center;
+}
+
+.draw-vs-line em {
+  font-style: normal;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
+.draw-waiting {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.draw-waiting strong {
+  font-size: 13px;
+}
+
+.draw-waiting-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.draw-waiting-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  background: #edf4ff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #31557e;
 }
 
 .modal-body .participant-box .pick-grid {
@@ -1477,6 +1584,7 @@ select:focus {
   }
 
   .workspace-head {
+    top: 8px;
     flex-direction: column;
     align-items: flex-start;
   }
@@ -1484,6 +1592,11 @@ select:focus {
   .head-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .menu-toggle-btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .panel-grid.two,
@@ -1652,7 +1765,6 @@ select:focus {
 
   .tab-btn,
   .side-close-btn,
-  .health-pill,
   .btn.ghost,
   .modal-close,
   input,
@@ -1664,6 +1776,13 @@ select:focus {
     background: #0f1a29;
     color: var(--ink);
     border-color: var(--line-strong);
+  }
+
+  .menu-toggle-btn {
+    border-color: #4d86ff;
+    background: linear-gradient(145deg, #2c63d0, #3d84ff);
+    color: #eef4ff;
+    box-shadow: 0 20px 34px -20px rgba(55, 120, 255, 0.86);
   }
 
   .table-link {
@@ -1683,7 +1802,6 @@ select:focus {
   .brand-overline,
   .kpi-card small,
   label,
-  .sync-text,
   .side-foot p {
     color: var(--ink-muted);
   }
@@ -1834,5 +1952,22 @@ select:focus {
 
   .team-row.loser .team-score {
     color: #8ea4bd;
+  }
+
+  .draw-court-card {
+    background: linear-gradient(160deg, #152336, #121f31);
+    border-color: #2c3f5b;
+  }
+
+  .draw-vs-line span {
+    background: #0f1b2b;
+    border-color: #2d415f;
+    color: #d8e5f8;
+  }
+
+  .draw-waiting-chip {
+    border-color: #375070;
+    background: #1a2a40;
+    color: #c8dcf6;
   }
 }
